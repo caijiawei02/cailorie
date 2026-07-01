@@ -179,9 +179,8 @@ Telegram ──HTTPS POST──▶  │  fyp nginx:443 (shared, Let's Encrypt TL
 5. **Connect fyp's nginx to the shared Docker network** so it can resolve `cailorie-bot`:
    ```sh
    docker network create shared
-   docker network connect shared caregiver-nginx
    ```
-   (The cailorie `server` blocks for `cailorie.mycaregiver.xyz` are already committed in `~/fyp/backend/nginx.conf` — no file changes needed on the VM. Just redeploy/reload fyp's nginx after pulling the fyp repo.)
+   (fyp's `docker-compose.prod.yml` now declares `networks: shared: external: true` for the `nginx` service, so `caregiver-nginx` joins `shared` automatically on every `docker compose up`. fyp's deploy workflow also ensures `shared` exists before starting. The cailorie `server` blocks for `cailorie.mycaregiver.xyz` are already committed in `~/fyp/backend/nginx.conf` — no file changes needed on the VM.)
 6. **Auto-renew cron** (sudo crontab -e) — renew both certs and reload the shared nginx:
    ```
    0 0,12 * * * certbot renew --quiet --post-hook "docker compose -f $HOME/fyp/backend/docker-compose.prod.yml restart nginx"

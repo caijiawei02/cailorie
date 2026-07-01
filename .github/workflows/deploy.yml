@@ -24,29 +24,41 @@ jobs:
           command_timeout: 30m
           script: |
             set -euo pipefail
-            export PATH="/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
+            export PATH="/usr/local/bin:/usr/local/sbin:/usr/bin:/usr/sbin:/bin:/sbin"
 
             echo "=== Environment ==="
-            docker --version || { echo "ERROR: docker not found"; exit 1; }
-            git --version || { echo "ERROR: git not found"; exit 1; }
+            docker --version
+            git --version
 
             # ── Clone or pull latest code ──
-            if [ -d "$HOME/cailorie/.git" ]; then
+            # appleboy/ssh-action with script_stop:true exits on ANY command
+            # returning non-zero, including `[ -d dir ]` when dir is absent.
+            # Workaround: assign the test result to a var inside a compound
+            # command whose overall exit code is always 0, then branch on the
+            # var (string comparison exits 0 either way).
+            REPO_EXISTS=no
+            { [ -d "$HOME/cailorie/.git" ] && REPO_EXISTS=yes; } || true
+            if [ "$REPO_EXISTS" = "yes" ]; then
+              echo "Existing repo found, pulling latest..."
               cd "$HOME/cailorie"
-              git fetch origin
+              git fetch origin main
               git reset --hard origin/main
-              echo "Pulled latest: $(git log -oneline -1)"
+              echo "Pulled latest: $(git log --oneline -1)"
             else
+              echo "Cloning repository..."
+              rm -rf "$HOME/cailorie"
               git clone https://github.com/${{ github.repository }}.git "$HOME/cailorie"
               cd "$HOME/cailorie"
-              echo "Cloned repository"
+              echo "Cloned repository: $(git log --oneline -1)"
             fi
 
             # ── Shared Docker network (so fyp's nginx can reach cailorie-bot) ──
             docker network inspect shared >/dev/null 2>&1 || docker network create shared
 
             # ── .env (create if missing, never overwrite secrets) ──
-            if [ ! -f .env ]; then
+            ENV_EXISTS=no
+            { [ -f .env ] && ENV_EXISTS=yes; } || true
+            if [ "$ENV_EXISTS" = "no" ]; then
               echo "Creating .env from .env.example..."
               cp .env.example .env
               echo "EDIT .env on the VM to fill in TELEGRAM_TOKEN, GEMINI_API_KEY, GROUP_CHAT_ID, WEBHOOK_*"
@@ -57,12 +69,10 @@ jobs:
             docker compose -f docker-compose.prod.yml down || true
             docker compose -f docker-compose.prod.yml up -d --build
 
-            # ── Connect fyp's nginx to the shared network so it can reach
-            #    cailorie-bot, then reload it (the cailorie server block lives
-            #    in ~/fyp/backend/nginx.conf, committed in the fyp repo). ──
-            if [ -d "$HOME/fyp/backend" ]; then
-              docker network inspect shared >/dev/null 2>&1 || docker network create shared
-              docker network connect shared caregiver-nginx 2>/dev/null || true
+            # ── Reload fyp's nginx so it picks up the cailorie server block ──
+            HAS_FYP=0
+            [ -d "$HOME/fyp/backend" ] && HAS_FYP=1 || true
+            if [ "$HAS_FYP" = "1" ]; then
               docker compose -f "$HOME/fyp/backend/docker-compose.prod.yml" exec -T nginx nginx -s reload \
                 && echo "fyp nginx reloaded (cailorie server block active)" \
                 || echo "WARN: could not reload fyp nginx"
@@ -72,8 +82,12 @@ jobs:
 
             # ── Wait for bot health ──
             echo "Waiting for bot to become healthy..."
-            for i in $(seq 1 30); do
-              if docker compose -f docker-compose.prod.yml ps bot | grep -q healthy; then
+            i=0
+            while [ "$i" -lt 30 ]; do
+              i=$((i + 1))
+              HEALTHY=0
+              docker compose -f docker-compose.prod.yml ps bot | grep -q healthy && HEALTHY=1 || true
+              if [ "$HEALTHY" = "1" ]; then
                 echo "Bot is healthy!"
                 break
               fi
