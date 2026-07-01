@@ -1,0 +1,150 @@
+package bot
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"io"
+	"log"
+	"time"
+
+	"github.com/caijiawei02/cailorie/internal/gemini"
+	"github.com/caijiawei02/cailorie/internal/model"
+	"github.com/caijiawei02/cailorie/internal/storage"
+	telebot "gopkg.in/telebot.v3"
+)
+
+// Handler bundles the bot with its dependencies for registering handlers.
+type Handler struct {
+	bot          *telebot.Bot
+	db           *sql.DB
+	gem          *gemini.Client
+	sgt          *time.Location
+	allowedChats map[int64]bool
+}
+
+// NewHandler constructs a Handler.
+func NewHandler(b *telebot.Bot, db *sql.DB, g *gemini.Client, sgt *time.Location, allowed map[int64]bool) *Handler {
+	return &Handler{bot: b, db: db, gem: g, sgt: sgt, allowedChats: allowed}
+}
+
+// Register attaches all handlers/middleware to the bot.
+func (h *Handler) Register() {
+	h.bot.Use(h.trackUserMiddleware())
+	h.bot.Handle(telebot.OnPhoto, h.onPhoto)
+	h.bot.Handle("/chatid", h.onChatID)
+}
+
+// trackUserMiddleware silently upserts every message sender in allowed groups
+// into the users table. Non-allowed chats are skipped (no tracking, no reply).
+func (h *Handler) trackUserMiddleware() telebot.MiddlewareFunc {
+	return func(next telebot.HandlerFunc) telebot.HandlerFunc {
+		return func(c telebot.Context) error {
+			m := c.Message()
+			if m == nil || m.Sender == nil || m.Chat == nil {
+				return next(c)
+			}
+			if !h.chatAllowed(m.Chat.ID) {
+				return next(c)
+			}
+			u := m.Sender
+			if err := storage.UpsertUser(h.db, m.Chat.ID, u.ID, u.Username, u.FirstName, time.Now().UTC()); err != nil {
+				log.Printf("upsert user %d in chat %d: %v", u.ID, m.Chat.ID, err)
+			}
+			return next(c)
+		}
+	}
+}
+
+func (h *Handler) chatAllowed(chatID int64) bool {
+	if len(h.allowedChats) == 0 {
+		return false
+	}
+	return h.allowedChats[chatID]
+}
+
+// onPhoto handles an incoming photo in an allowed group.
+func (h *Handler) onPhoto(c telebot.Context) error {
+	m := c.Message()
+	if m == nil || m.Chat == nil || m.Photo == nil {
+		return nil
+	}
+	chatID := m.Chat.ID
+	if !h.chatAllowed(chatID) {
+		return nil
+	}
+	sender := m.Sender
+	if sender == nil {
+		return nil
+	}
+
+	// 1. Download the photo bytes from Telegram.
+	reader, err := h.bot.File(&m.Photo.File)
+	if err != nil {
+		log.Printf("download photo (chat %d, user %d): %v", chatID, sender.ID, err)
+		return c.Reply(fmt.Sprintf("%s — couldn't download your photo. Try again.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
+	}
+	defer reader.Close()
+	imageBytes, err := io.ReadAll(reader)
+	if err != nil {
+		log.Printf("read photo bytes (chat %d, user %d): %v", chatID, sender.ID, err)
+		return c.Reply(fmt.Sprintf("%s — couldn't process your photo. Try again.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
+	}
+
+	// 2. Estimate calories via Gemini. Photos are JPEG on Telegram.
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	calories, err := h.gem.EstimateCalories(ctx, imageBytes, "image/jpeg")
+	if err != nil {
+		if err == gemini.ErrNotFood {
+			return c.Reply(fmt.Sprintf("%s — couldn't identify the meal. Please send a clearer photo.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
+		}
+		log.Printf("gemini estimate (chat %d, user %d): %v", chatID, sender.ID, err)
+		return c.Reply(fmt.Sprintf("%s — Gemini is busy right now, please try again in a moment.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
+	}
+
+	// 3. Determine meal number (count existing meals today + 1).
+	dayStart, dayEnd := sgtDayBounds(time.Now(), h.sgt)
+	count, err := storage.DayMealCount(h.db, chatID, sender.ID, dayStart, dayEnd)
+	if err != nil {
+		log.Printf("day meal count (chat %d, user %d): %v", chatID, sender.ID, err)
+		return c.Reply(fmt.Sprintf("%s — internal error, please try again.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
+	}
+	mealLabel := count + 1
+
+	// 4. Insert the meal row.
+	meal := model.Meal{
+		ChatID:      chatID,
+		UserID:      sender.ID,
+		Username:    sender.Username,
+		PhotoFileID: m.Photo.FileID,
+		Calories:    calories,
+		MealLabel:   mealLabel,
+		CreatedAt:   time.Now().UTC(),
+	}
+	if _, err := storage.InsertMeal(h.db, meal); err != nil {
+		log.Printf("insert meal (chat %d, user %d): %v", chatID, sender.ID, err)
+		return c.Reply(fmt.Sprintf("%s — internal error, please try again.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
+	}
+
+	// 5. Query the day's meals for this user (to render the full list).
+	meals, err := storage.DayMeals(h.db, chatID, sender.ID, dayStart, dayEnd)
+	if err != nil {
+		log.Printf("day meals query (chat %d, user %d): %v", chatID, sender.ID, err)
+		return nil
+	}
+
+	// 6. Reply with the full meal list + total (quote-reply, HTML).
+	reply := formatMealsReply(meals, sender.Username, sender.FirstName, time.Now(), h.sgt)
+	return c.Reply(reply, telebot.ModeHTML)
+}
+
+// onChatID replies with the current chat id. Useful during setup; works in any
+// chat (DM or group) — it's a debugging helper, not a calorie command.
+func (h *Handler) onChatID(c telebot.Context) error {
+	m := c.Message()
+	if m == nil || m.Chat == nil {
+		return nil
+	}
+	return c.Reply(fmt.Sprintf("chat_id: %d", m.Chat.ID))
+}

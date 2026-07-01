@@ -1,0 +1,31 @@
+[Unit]
+Description=Cailorie Telegram Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=cailorie
+Group=cailorie
+WorkingDirectory=/var/lib/cailorie
+EnvironmentFile=/etc/cailorie/.env
+ExecStart=/usr/local/bin/cailorie
+Restart=on-failure
+RestartSec=5
+# Ensure the data directory exists and is owned by the service user.
+RuntimeDirectory=cailorie
+StateDirectory=cailorie
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/cailorie
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target
