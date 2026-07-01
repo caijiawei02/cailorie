@@ -32,7 +32,7 @@ func New(baseURL, model, apiKey string) (*Client, error) {
 		baseURL = "http://localhost:11434"
 	}
 	if model == "" {
-		model = "llava:7b"
+		model = "minicpm-v"
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 	return &Client{
