@@ -9,17 +9,20 @@ totals, posting a daily summary at 23:58 SGT.
 | Concern        | Library |
 |----------------|---------|
 | Language        | Go 1.24 (toolchain pinned to local) |
-| Telegram       | `gopkg.in/telebot.v3` (long-polling, no inbound port needed) |
+| Telegram       | `gopkg.in/telebot.v3` (**webhook** mode; nginx terminates TLS) |
 | Gemini vision   | `github.com/google/generative-ai-go/genai` (model `gemini-1.5-flash`, free-tier) |
 | Storage         | SQLite via `modernc.org/sqlite` v1.45.0 (pure-Go, no CGO — easy on ARM Ampere Oracle VMs) |
 | Scheduler        | `github.com/robfig/cron/v3` located in `Asia/Singapore`, seconds-field enabled |
 | Config           | `github.com/joho/godotenv` + OS env |
+| Reverse proxy    | nginx (SSL termination via Let's Encrypt) |
+| Deploy           | Docker Compose on Oracle Cloud Free Tier VM, via GitHub Actions SSH |
 
 ## Module layout
 
 ```
 cmd/bot/main.go            Entrypoint: load env, open DB, build Gemini client,
-                           start telebot (long-polling), register cron, run.
+                           start telebot (webhook), register cron, run,
+                           serve /health on a separate port.
 internal/bot/
   handler.go               OnPhoto handler, /chatid helper, user-tracking middleware.
   reply.go                 HTML formatters for the per-photo reply and the daily summary.
@@ -32,6 +35,10 @@ internal/storage/
 internal/model/
   meal.go                  Meal struct.
   user.go                  User struct.
+nginx.conf                 Reverse proxy: TLS termination, /health → bot:8081, /tg/ → bot:8080.
+docker-compose.prod.yml    Production compose (bot + nginx) for the Oracle VM.
+docker-compose.yml         Dev compose (bot only, ports exposed for ngrok testing).
+.github/workflows/deploy.yml  GitHub Actions: SSH to Oracle VM, docker compose up.
 ```
 
 ## Data model
@@ -73,6 +80,10 @@ Index `idx_meals_day(chat_id, user_id, created_at)`.
 | `GROUP_CHAT_ID` | yes | — | comma-separated int64 group chat ids |
 | `TZ` | no | `Asia/Singapore` | IANA timezone for day boundaries + cron |
 | `DB_PATH` | no | `cailorie.db` | SQLite file path |
+| `WEBHOOK_PUBLIC_URL` | yes | — | public HTTPS URL Telegram POSTs to, e.g. `https://cailorie.mycaregiver.xyz/tg/<secret>/` |
+| `WEBHOOK_LISTEN` | yes | — | bot's webhook HTTP listener addr (inside container), e.g. `:8080` |
+| `WEBHOOK_SECRET_TOKEN` | yes | — | random string for the `X-Telegram-Bot-Api-Secret-Token` header (1–256 chars `[A-Za-z0-9_-]`) |
+| `HEALTH_LISTEN` | no | `:8081` | addr of the `/health` endpoint for Docker/nginx healthchecks |
 
 ## Flows
 
@@ -126,30 +137,94 @@ Index `idx_meals_day(chat_id, user_id, created_at)`.
 - Gemini `ErrNotFood`: user-facing "couldn't identify the meal" reply, no DB write.
 - Internal DB errors: user-facing "internal error" reply, logged.
 
-## Deployment (Oracle Cloud Ampere VM, Ubuntu/Oracle Linux)
+## Webhook architecture
 
-1. **Build** (on the VM or cross-compile from your machine):
+```
+                          ┌─────────────────── Oracle VM (same as fyp) ──────────────────┐
+                          │                                                              │
+Telegram ──HTTPS POST──▶  │  fyp nginx:443 (shared, Let's Encrypt TLS)                   │
+                          │   ├─ Host: api.mycaregiver.xyz   → http://api:8000  (fyp)     │
+                          │   └─ Host: cailorie.mycaregiver.xyz                          │
+                          │         ├─ /tg/   → http://cailorie-bot:8080  (this bot)     │
+                          │         └─ /health→ http://cailorie-bot:8081                  │
+                          │                  │                                             │
+                          │                  ▼                                             │
+                          │           cailorie bot (HTTP, plain) ──▶ Gemini (outbound)   │
+                          │                                                              │
+                          └──────────────────────────────────────────────────────────────┘
+```
+
+- **Shared nginx, separate subdomain:** cailorie reuses the *same* nginx process as the sibling fyp project (no port 80/443 conflict). Routing is by `Host` header — fyp keeps `api.mycaregiver.xyz`, cailorie gets `cailorie.mycaregiver.xyz`. Both are A records to the same VM IP.
+- **Why separate subdomain:** keeps cailorie decoupled from the FYP lifecycle (when FYP is retired, cailorie keeps working — just repoint DNS / move it later). No path-namespace sharing.
+- **Shared Docker network:** both composes attach containers to an external `shared` network so fyp's nginx can resolve `cailorie-bot`. Created once: `docker network create shared`.
+- **TLS:** the shared fyp nginx terminates TLS with a Let's Encrypt cert for `cailorie.mycaregiver.xyz` (separate from fyp's `api.mycaregiver.xyz` cert; both on the same VM). The bot container listens on plain HTTP inside the Docker network — never exposed directly.
+- **Secret token:** `WEBHOOK_SECRET_TOKEN` is sent by Telegram in the `X-Telegram-Bot-Api-Secret-Token` header. telebot validates it (`Webhook.SecretToken`) and rejects requests without it. nginx passes the header through unchanged. This prevents arbitrary third parties from hitting the webhook URL and injecting fake updates.
+- **Webhook path:** a random secret path segment in `WEBHOOK_PUBLIC_URL` (e.g. `/tg/a1b2c3d4e5/`) provides defense-in-depth on top of the secret-token header.
+
+## Deployment (Oracle Cloud Ampere VM, mirroring the fyp project)
+
+### One-time VM setup (matches `fyp/docs/DEPLOY_STEP_BY_STEP.md`)
+1. **OCI Console → Networking → VCN → Security Lists → Add Ingress Rules:** `0.0.0.0/0` → ports `22`, `80`, `443`. (Already done for fyp — skip if fyp is already deployed on this VM.)
+2. **VM:** install Docker, Git, add 2G swap (A1.Flex needs it). (Already done for fyp — skip.)
+3. **DNS:** add A record `cailorie.mycaregiver.xyz` → VM public IP (same IP as `api.mycaregiver.xyz`).
+4. **TLS cert for `cailorie.mycaregiver.xyz`:**
    ```sh
-   GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o cailorie ./cmd/bot
+   # Stop fyp's nginx so certbot can bind port 80 for the challenge:
+   docker compose -f ~/fyp/backend/docker-compose.prod.yml stop nginx
+   sudo certbot certonly --standalone -d cailorie.mycaregiver.xyz
+   # certs land in /etc/letsencrypt/live/cailorie.mycaregiver.xyz/
+   docker compose -f ~/fyp/backend/docker-compose.prod.yml start nginx
    ```
-   (`CGO_ENABLED=0` works because `modernc.org/sqlite` is pure-Go.)
-
-2. **Install** binary at `/usr/local/bin/cailorie`, config at `/etc/cailorie/.env`, data dir at `/var/lib/cailorie`.
-
-3. **Service user**:
+5. **One-time fyp nginx mount switch** (so cailorie's server block can be dropped in). This is auto-done by the GitHub Actions workflow on first cailorie deploy, but you can do it manually:
    ```sh
-   sudo useradd -r -d /var/lib/cailorie -s /usr/sbin/nologin cailorie
-   sudo mkdir -p /var/lib/cailorie && sudo chown cailorie:cailorie /var/lib/cailorie
+   cd ~/fyp/backend
+   mkdir -p nginx && mv nginx.conf nginx/default.conf
+   # edit docker-compose.prod.yml nginx volume mount:
+   #   ./nginx.conf:/etc/nginx/conf.d/default.conf:ro  →  ./nginx:/etc/nginx/conf.d:ro
+   docker network create shared
+   docker network connect shared caregiver-nginx
+   docker compose -f docker-compose.prod.yml up -d --force-recreate nginx
+   ```
+6. **Auto-renew cron** (sudo crontab -e) — renew both certs and reload the shared nginx:
+   ```
+   0 0,12 * * * certbot renew --quiet --post-hook "docker compose -f $HOME/fyp/backend/docker-compose.prod.yml restart nginx"
    ```
 
-4. **systemd**: copy `systemd/cailorie.service` to `/etc/systemd/system/`, then:
-   ```sh
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now cailorie
-   sudo journalctl -u cailorie -f
-   ```
+### CI/CD via GitHub Actions
+- Secrets (repo → Settings → Secrets → Actions): `OCI_VM_IP`, `OCI_VM_USER` (e.g. `ubuntu`), `OCI_SSH_PRIVATE_KEY`.
+- On push to `main`, `.github/workflows/deploy.yml` SSHes into the VM, pulls the latest code, runs `docker compose -f docker-compose.prod.yml up -d --build`, then drops the cailorie nginx server block into `~/fyp/backend/nginx/cailorie.conf` and reloads the shared fyp nginx.
+- First deploy: the workflow copies `.env.example` → `.env` if missing. **SSH in and fill in the real secrets** (`TELEGRAM_TOKEN`, `GEMINI_API_KEY`, `GROUP_CHAT_ID`, `WEBHOOK_*`) before the bot will start.
 
-5. **Networking**: long-polling makes outbound HTTPS only — no inbound port needs to be opened on the Oracle VCN firewall.
+### Manual deploy (without GitHub Actions)
+```sh
+# On the VM:
+cd ~/cailorie
+cp .env.example .env && nano .env   # fill in secrets
+docker network create shared 2>/dev/null || true
+docker compose -f docker-compose.prod.yml up -d --build
+docker compose -f docker-compose.prod.yml logs -f bot
+
+# Wire nginx (if fyp is deployed):
+mkdir -p ~/fyp/backend/nginx && cp nginx.conf ~/fyp/backend/nginx/cailorie.conf
+docker network connect shared caregiver-nginx 2>/dev/null || true
+docker compose -f ~/fyp/backend/docker-compose.prod.yml exec nginx nginx -s reload
+```
+
+### Local dev with webhook (ngrok)
+```sh
+cp .env.example .env && nano .env
+# Set WEBHOOK_PUBLIC_URL to your ngrok URL, e.g. https://xxxx.ngrok-free.app/tg/secret/
+docker compose -f docker-compose.yml up -d --build   # bot on :8080/:8081, no nginx
+# In another terminal:
+ngrok http 8080
+# Update WEBHOOK_PUBLIC_URL to the ngrok URL + /tg/secret/ and restart the bot.
+```
+
+## Build (cross-compile for ARM64)
+```sh
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o cailorie ./cmd/bot
+```
+(`CGO_ENABLED=0` works because `modernc.org/sqlite` is pure-Go.) The Dockerfile does this inside a `golang:1.24-alpine` build stage.
 
 ## Bot setup in Telegram
 1. Create the bot via @BotFather, copy the token into `TELEGRAM_TOKEN`.
@@ -159,9 +234,11 @@ Index `idx_meals_day(chat_id, user_id, created_at)`.
 
 ## Files changed in this build
 - `go.mod`, `go.sum` (new): module `github.com/caijiawei02/cailorie`, deps as above.
-- `cmd/bot/main.go` (new): wiring, cron, signal handling.
+- `cmd/bot/main.go` (new): wiring, webhook poller, cron, signal handling, /health server.
 - `internal/bot/{handler,reply,summary}.go` (new).
 - `internal/gemini/client.go` (new).
 - `internal/storage/{db,meals,users}.go` (new).
 - `internal/model/{meal,user}.go` (new).
-- `.env.example`, `.gitignore`, `Dockerfile`, `systemd/cailorie.service` (new).
+- `Dockerfile`, `nginx.conf`, `docker-compose.prod.yml`, `docker-compose.yml` (new).
+- `.github/workflows/deploy.yml` (new): GitHub Actions SSH deploy to Oracle VM.
+- `.env.example`, `.gitignore` (new).

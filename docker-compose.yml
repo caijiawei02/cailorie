@@ -1,0 +1,17 @@
+name: cailorie-dev
+
+services:
+  bot:
+    build: .
+    container_name: cailorie-bot-dev
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    volumes:
+      - botdata:/var/lib/cailorie
+    restart: unless-stopped
+
+volumes:
+  botdata:

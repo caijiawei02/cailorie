@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -13,8 +15,8 @@ import (
 	"github.com/caijiawei02/cailorie/internal/gemini"
 	"github.com/caijiawei02/cailorie/internal/storage"
 	"github.com/joho/godotenv"
-	telebot "gopkg.in/telebot.v3"
 	"github.com/robfig/cron/v3"
+	telebot "gopkg.in/telebot.v3"
 )
 
 func main() {
@@ -27,14 +29,29 @@ func main() {
 	tzName := os.Getenv("TZ")
 	dbPath := os.Getenv("DB_PATH")
 
+	// Webhook config.
+	webhookPublicURL := os.Getenv("WEBHOOK_PUBLIC_URL") // e.g. https://cailorie.example.com/tg/<token>/
+	webhookListen := os.Getenv("WEBHOOK_LISTEN")       // e.g. :8080
+	webhookSecret := os.Getenv("WEBHOOK_SECRET_TOKEN")  // random, shared with Telegram
+	healthListen := os.Getenv("HEALTH_LISTEN")          // e.g. :8081
+
 	if tgToken == "" || geminiKey == "" {
 		log.Fatal("TELEGRAM_TOKEN and GEMINI_API_KEY are required")
+	}
+	if webhookPublicURL == "" || webhookListen == "" {
+		log.Fatal("WEBHOOK_PUBLIC_URL and WEBHOOK_LISTEN are required (webhook mode)")
+	}
+	if webhookSecret == "" {
+		log.Fatal("WEBHOOK_SECRET_TOKEN is required (Telegram secret token header)")
 	}
 	if tzName == "" {
 		tzName = "Asia/Singapore"
 	}
 	if dbPath == "" {
 		dbPath = "cailorie.db"
+	}
+	if healthListen == "" {
+		healthListen = ":8081"
 	}
 
 	sgt, err := time.LoadLocation(tzName)
@@ -69,12 +86,18 @@ func main() {
 	}
 	defer gem.Close()
 
-	// Build telebot (long-polling).
+	// Build telebot (webhook). nginx terminates TLS, so the bot listens on
+	// plain HTTP. Endpoint.PublicURL tells Telegram where to POST updates.
 	pref := telebot.Settings{
-		Token:   tgToken,
-		Poller:  &telebot.LongPoller{Timeout: 10 * time.Second},
-		Updates: 0,
+		Token:     tgToken,
 		ParseMode: telebot.ModeHTML,
+		Poller: &telebot.Webhook{
+			Listen:      webhookListen,
+			SecretToken:  webhookSecret,
+			Endpoint:    &telebot.WebhookEndpoint{PublicURL: webhookPublicURL},
+			MaxConnections: 40,
+			DropUpdates:    true,
+		},
 	}
 	tgBot, err := telebot.NewBot(pref)
 	if err != nil {
@@ -100,7 +123,19 @@ func main() {
 	c.Start()
 	defer c.Stop()
 
-	log.Printf("cailorie bot started, polling for updates (TZ=%s)", tzName)
+	log.Printf("cailorie bot starting in webhook mode (TZ=%s, listen=%s, public=%s)", tzName, webhookListen, webhookPublicURL)
+
+	// Health endpoint for Docker/nginx healthchecks (separate from the
+	// telebot webhook listener).
+	go func() {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintln(w, "ok")
+		})
+		if err := http.ListenAndServe(healthListen, mux); err != nil {
+			log.Printf("health server on %s: %v", healthListen, err)
+		}
+	}()
 
 	// Run until SIGINT/SIGTERM.
 	go func() {
