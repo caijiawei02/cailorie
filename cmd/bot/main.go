@@ -13,6 +13,8 @@ import (
 
 	"github.com/caijiawei02/cailorie/internal/bot"
 	"github.com/caijiawei02/cailorie/internal/gemini"
+	"github.com/caijiawei02/cailorie/internal/llm"
+	"github.com/caijiawei02/cailorie/internal/ollama"
 	"github.com/caijiawei02/cailorie/internal/storage"
 	"github.com/joho/godotenv"
 	"github.com/robfig/cron/v3"
@@ -24,19 +26,29 @@ func main() {
 	_ = godotenv.Load()
 
 	tgToken := os.Getenv("TELEGRAM_TOKEN")
-	geminiKey := os.Getenv("GEMINI_API_KEY")
 	chatIDsEnv := os.Getenv("GROUP_CHAT_ID")
 	tzName := os.Getenv("TZ")
 	dbPath := os.Getenv("DB_PATH")
 
-	// Webhook config.
-	webhookPublicURL := os.Getenv("WEBHOOK_PUBLIC_URL") // e.g. https://cailorie.example.com/tg/<token>/
-	webhookListen := os.Getenv("WEBHOOK_LISTEN")       // e.g. :8080
-	webhookSecret := os.Getenv("WEBHOOK_SECRET_TOKEN")  // random, shared with Telegram
-	healthListen := os.Getenv("HEALTH_LISTEN")          // e.g. :8081
+	// LLM provider config.
+	provider := os.Getenv("LLM_PROVIDER") // "gemini" (default) or "ollama"
+	geminiKey := os.Getenv("GEMINI_API_KEY")
+	geminiModel := os.Getenv("GEMINI_MODEL")
+	ollamaBaseURL := os.Getenv("OLLAMA_BASE_URL") // e.g. https://api.ollama.com (Cloud) or http://localhost:11434
+	ollamaModel := os.Getenv("OLLAMA_MODEL")       // e.g. llava:7b, minicpm-v, qwen2.5-vl
+	ollamaKey := os.Getenv("OLLAMA_API_KEY")       // Ollama Cloud bearer token (empty for local)
 
-	if tgToken == "" || geminiKey == "" {
-		log.Fatal("TELEGRAM_TOKEN and GEMINI_API_KEY are required")
+	// Webhook config.
+	webhookPublicURL := os.Getenv("WEBHOOK_PUBLIC_URL")
+	webhookListen := os.Getenv("WEBHOOK_LISTEN")
+	webhookSecret := os.Getenv("WEBHOOK_SECRET_TOKEN")
+	healthListen := os.Getenv("HEALTH_LISTEN")
+
+	if tgToken == "" {
+		log.Fatal("TELEGRAM_TOKEN is required")
+	}
+	if provider == "" {
+		provider = "gemini"
 	}
 	if webhookPublicURL == "" || webhookListen == "" {
 		log.Fatal("WEBHOOK_PUBLIC_URL and WEBHOOK_LISTEN are required (webhook mode)")
@@ -79,12 +91,30 @@ func main() {
 	}
 	defer db.Close()
 
-	// Build Gemini client.
-	gem, err := gemini.New(geminiKey)
-	if err != nil {
-		log.Fatalf("gemini client: %v", err)
+	// Build the LLM client based on the configured provider.
+	var lc llm.Client
+	switch provider {
+	case "ollama":
+		oc, err := ollama.New(ollamaBaseURL, ollamaModel, ollamaKey)
+		if err != nil {
+			log.Fatalf("ollama client: %v", err)
+		}
+		lc = oc
+		log.Printf("LLM provider: ollama (base=%s, model=%s)", ollamaBaseURL, ollamaModel)
+	case "gemini":
+		fallthrough
+	default:
+		if geminiKey == "" {
+			log.Fatal("GEMINI_API_KEY is required when LLM_PROVIDER=gemini")
+		}
+		gc, err := gemini.New(geminiKey, geminiModel)
+		if err != nil {
+			log.Fatalf("gemini client: %v", err)
+		}
+		lc = gc
+		log.Printf("LLM provider: gemini (model=%s)", geminiModel)
 	}
-	defer gem.Close()
+	defer lc.Close()
 
 	// Build telebot (webhook). nginx terminates TLS, so the bot listens on
 	// plain HTTP. Endpoint.PublicURL tells Telegram where to POST updates.
@@ -105,7 +135,7 @@ func main() {
 	}
 
 	// Register handlers.
-	h := bot.NewHandler(tgBot, db, gem, sgt, allowedChats)
+	h := bot.NewHandler(tgBot, db, lc, sgt, allowedChats)
 	h.Register()
 
 	// Schedule the daily summary at 23:58 SGT, every day.

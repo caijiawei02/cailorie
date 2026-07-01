@@ -9,7 +9,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/caijiawei02/cailorie/internal/gemini"
+	"github.com/caijiawei02/cailorie/internal/llm"
 	"github.com/caijiawei02/cailorie/internal/model"
 	"github.com/caijiawei02/cailorie/internal/storage"
 	telebot "gopkg.in/telebot.v3"
@@ -19,14 +19,14 @@ import (
 type Handler struct {
 	bot          *telebot.Bot
 	db           *sql.DB
-	gem          *gemini.Client
+	llm          llm.Client
 	sgt          *time.Location
 	allowedChats map[int64]bool
 }
 
 // NewHandler constructs a Handler.
-func NewHandler(b *telebot.Bot, db *sql.DB, g *gemini.Client, sgt *time.Location, allowed map[int64]bool) *Handler {
-	return &Handler{bot: b, db: db, gem: g, sgt: sgt, allowedChats: allowed}
+func NewHandler(b *telebot.Bot, db *sql.DB, lc llm.Client, sgt *time.Location, allowed map[int64]bool) *Handler {
+	return &Handler{bot: b, db: db, llm: lc, sgt: sgt, allowedChats: allowed}
 }
 
 // Register attaches all handlers/middleware to the bot.
@@ -95,10 +95,10 @@ func (h *Handler) onPhoto(c telebot.Context) error {
 	// 2. Estimate calories via Gemini. Photos are JPEG on Telegram.
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	calories, err := h.gem.EstimateCalories(ctx, imageBytes, "image/jpeg")
+	calories, err := h.llm.EstimateCalories(ctx, imageBytes, "image/jpeg")
 	if err != nil {
-		log.Printf("gemini estimate (chat %d, user %d): %v", chatID, sender.ID, err)
-		return c.Reply(formatGeminiError(err, sender.Username, sender.FirstName), telebot.ModeHTML)
+		log.Printf("llm estimate (chat %d, user %d): %v", chatID, sender.ID, err)
+		return c.Reply(formatLLMError(err, sender.Username, sender.FirstName), telebot.ModeHTML)
 	}
 
 	// 3. Determine meal number (count existing meals today + 1).
@@ -147,22 +147,24 @@ func (h *Handler) onChatID(c telebot.Context) error {
 	return c.Reply(fmt.Sprintf("chat_id: %d", m.Chat.ID))
 }
 
-// formatGeminiError maps a Gemini error to a user-facing HTML reply that
+// formatLLMError maps an LLM error to a user-facing HTML reply that
 // explains what went wrong in plain language.
-func formatGeminiError(err error, username, firstName string) string {
+func formatLLMError(err error, username, firstName string) string {
 	who := displayName(username, firstName)
 	switch {
-	case errors.Is(err, gemini.ErrNotFood):
+	case errors.Is(err, llm.ErrNotFood):
 		return fmt.Sprintf("%s — couldn't identify the meal. Please send a clearer photo.", who)
-	case errors.Is(err, gemini.ErrQuotaExceeded):
-		return fmt.Sprintf("%s — Gemini's free-tier quota for today has been used up. Please try again tomorrow.", who)
-	case errors.Is(err, gemini.ErrInvalidKey):
-		return fmt.Sprintf("%s — Gemini API key is invalid or unauthorized. The bot admin needs to fix GEMINI_API_KEY.", who)
-	case errors.Is(err, gemini.ErrModelUnavailable):
-		return fmt.Sprintf("%s — the Gemini model is unavailable. The bot admin needs to update the model name.", who)
-	case errors.Is(err, gemini.ErrSafetyBlocked):
-		return fmt.Sprintf("%s — Gemini blocked the image for safety reasons. Please send a different photo.", who)
+	case errors.Is(err, llm.ErrQuotaExceeded):
+		return fmt.Sprintf("%s — the LLM quota for today has been used up. Please try again later.", who)
+	case errors.Is(err, llm.ErrInvalidKey):
+		return fmt.Sprintf("%s — LLM API key is invalid or unauthorized. The bot admin needs to fix the key.", who)
+	case errors.Is(err, llm.ErrModelNotFound):
+		return fmt.Sprintf("%s — the LLM model is unavailable. The bot admin needs to update the model name.", who)
+	case errors.Is(err, llm.ErrSafetyBlocked):
+		return fmt.Sprintf("%s — the image was blocked for safety reasons. Please send a different photo.", who)
+	case errors.Is(err, llm.ErrProviderDown):
+		return fmt.Sprintf("%s — the LLM provider is unreachable right now. Please try again in a moment.", who)
 	default:
-		return fmt.Sprintf("%s — Gemini returned an unexpected error. Please try again in a moment.", who)
+		return fmt.Sprintf("%s — couldn't process the image. Please try again in a moment.", who)
 	}
 }
