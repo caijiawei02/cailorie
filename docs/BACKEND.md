@@ -35,10 +35,10 @@ internal/storage/
 internal/model/
   meal.go                  Meal struct.
   user.go                  User struct.
-nginx.conf                 Reverse proxy: TLS termination, /health → bot:8081, /tg/ → bot:8080.
-docker-compose.prod.yml    Production compose (bot + nginx) for the Oracle VM.
+nginx.conf                 (lives in ~/fyp/backend/nginx.conf — cailorie server blocks appended there; NOT in this repo)
+docker-compose.prod.yml    Production compose (bot only — joins the `shared` Docker network so fyp's nginx can reach it).
 docker-compose.yml         Dev compose (bot only, ports exposed for ngrok testing).
-.github/workflows/deploy.yml  GitHub Actions: SSH to Oracle VM, docker compose up.
+.github/workflows/deploy.yml  GitHub Actions: SSH to Oracle VM, docker compose up, connect fyp's nginx to `shared`, reload.
 ```
 
 ## Data model
@@ -154,12 +154,13 @@ Telegram ──HTTPS POST──▶  │  fyp nginx:443 (shared, Let's Encrypt TL
                           └──────────────────────────────────────────────────────────────┘
 ```
 
-- **Shared nginx, separate subdomain:** cailorie reuses the *same* nginx process as the sibling fyp project (no port 80/443 conflict). Routing is by `Host` header — fyp keeps `api.mycaregiver.xyz`, cailorie gets `cailorie.mycaregiver.xyz`. Both are A records to the same VM IP.
-- **Why separate subdomain:** keeps cailorie decoupled from the FYP lifecycle (when FYP is retired, cailorie keeps working — just repoint DNS / move it later). No path-namespace sharing.
-- **Shared Docker network:** both composes attach containers to an external `shared` network so fyp's nginx can resolve `cailorie-bot`. Created once: `docker network create shared`.
-- **TLS:** the shared fyp nginx terminates TLS with a Let's Encrypt cert for `cailorie.mycaregiver.xyz` (separate from fyp's `api.mycaregiver.xyz` cert; both on the same VM). The bot container listens on plain HTTP inside the Docker network — never exposed directly.
-- **Secret token:** `WEBHOOK_SECRET_TOKEN` is sent by Telegram in the `X-Telegram-Bot-Api-Secret-Token` header. telebot validates it (`Webhook.SecretToken`) and rejects requests without it. nginx passes the header through unchanged. This prevents arbitrary third parties from hitting the webhook URL and injecting fake updates.
+- **Shared nginx, separate subdomain:** cailorie reuses the *same* nginx process (and the *same* `nginx.conf` file) as the sibling fyp project. The cailorie `server` blocks for `cailorie.mycaregiver.xyz` are **appended directly into `~/fyp/backend/nginx.conf`** (under a clearly-marked comment header) — no second nginx, no directory of separate files, no port 80/443 conflict. Routing is by `Host` header: fyp keeps `api.mycaregiver.xyz`, cailorie gets `cailorie.mycaregiver.xyz`. Both are A records to the same VM IP.
+- **Why separate subdomain:** keeps cailorie decoupled from the FYP lifecycle (when FYP is retired, move the cailorie server block into a standalone nginx and repoint DNS). No path-namespace sharing.
+- **Shared Docker network:** both composes attach containers to an external `shared` network so fyp's `caregiver-nginx` can resolve `cailorie-bot`. Created once on the VM: `docker network create shared`, then `docker network connect shared caregiver-nginx`.
+- **TLS:** the shared fyp nginx terminates TLS with a separate Let's Encrypt cert for `cailorie.mycaregiver.xyz` (provisioned via certbot; separate from fyp's `api.mycaregiver.xyz` cert, both on the same VM). The bot container listens on plain HTTP inside the Docker network — never exposed directly.
+- **Secret token:** `WEBHOOK_SECRET_TOKEN` is sent by Telegram in the `X-Telegram-Bot-Api-Secret-Token` header. telebot validates it (`Webhook.SecretToken`) and rejects requests without it. nginx passes the header through unchanged.
 - **Webhook path:** a random secret path segment in `WEBHOOK_PUBLIC_URL` (e.g. `/tg/a1b2c3d4e5/`) provides defense-in-depth on top of the secret-token header.
+- **Source of truth for the cailorie nginx block:** `~/fyp/backend/nginx.conf` (committed in the fyp repo). The cailorie repo itself does **not** carry an `nginx.conf`.
 
 ## Deployment (Oracle Cloud Ampere VM, mirroring the fyp project)
 
@@ -175,24 +176,20 @@ Telegram ──HTTPS POST──▶  │  fyp nginx:443 (shared, Let's Encrypt TL
    # certs land in /etc/letsencrypt/live/cailorie.mycaregiver.xyz/
    docker compose -f ~/fyp/backend/docker-compose.prod.yml start nginx
    ```
-5. **One-time fyp nginx mount switch** (so cailorie's server block can be dropped in). This is auto-done by the GitHub Actions workflow on first cailorie deploy, but you can do it manually:
+5. **Connect fyp's nginx to the shared Docker network** so it can resolve `cailorie-bot`:
    ```sh
-   cd ~/fyp/backend
-   mkdir -p nginx && mv nginx.conf nginx/default.conf
-   # edit docker-compose.prod.yml nginx volume mount:
-   #   ./nginx.conf:/etc/nginx/conf.d/default.conf:ro  →  ./nginx:/etc/nginx/conf.d:ro
    docker network create shared
    docker network connect shared caregiver-nginx
-   docker compose -f docker-compose.prod.yml up -d --force-recreate nginx
    ```
+   (The cailorie `server` blocks for `cailorie.mycaregiver.xyz` are already committed in `~/fyp/backend/nginx.conf` — no file changes needed on the VM. Just redeploy/reload fyp's nginx after pulling the fyp repo.)
 6. **Auto-renew cron** (sudo crontab -e) — renew both certs and reload the shared nginx:
    ```
    0 0,12 * * * certbot renew --quiet --post-hook "docker compose -f $HOME/fyp/backend/docker-compose.prod.yml restart nginx"
    ```
 
 ### CI/CD via GitHub Actions
-- Secrets (repo → Settings → Secrets → Actions): `OCI_VM_IP`, `OCI_VM_USER` (e.g. `ubuntu`), `OCI_SSH_PRIVATE_KEY`.
-- On push to `main`, `.github/workflows/deploy.yml` SSHes into the VM, pulls the latest code, runs `docker compose -f docker-compose.prod.yml up -d --build`, then drops the cailorie nginx server block into `~/fyp/backend/nginx/cailorie.conf` and reloads the shared fyp nginx.
+- Secrets (repo → Settings → Secrets → Actions): `OCI_VM_IP`, `OCI_SSH_PRIVATE_KEY`. (Username is hardcoded to `ubuntu`, matching the fyp workflow.)
+- On push to `main`, `.github/workflows/deploy.yml` SSHes into the VM, pulls the latest code, runs `docker compose -f docker-compose.prod.yml up -d --build`, then connects fyp's `caregiver-nginx` to the `shared` network and reloads it (the cailorie `server` block is already in `~/fyp/backend/nginx.conf`, committed via the fyp repo).
 - First deploy: the workflow copies `.env.example` → `.env` if missing. **SSH in and fill in the real secrets** (`TELEGRAM_TOKEN`, `GEMINI_API_KEY`, `GROUP_CHAT_ID`, `WEBHOOK_*`) before the bot will start.
 
 ### Manual deploy (without GitHub Actions)
@@ -204,8 +201,8 @@ docker network create shared 2>/dev/null || true
 docker compose -f docker-compose.prod.yml up -d --build
 docker compose -f docker-compose.prod.yml logs -f bot
 
-# Wire nginx (if fyp is deployed):
-mkdir -p ~/fyp/backend/nginx && cp nginx.conf ~/fyp/backend/nginx/cailorie.conf
+# Connect fyp's nginx to the shared network and reload (cailorie server block
+# is already in ~/fyp/backend/nginx.conf, committed via the fyp repo):
 docker network connect shared caregiver-nginx 2>/dev/null || true
 docker compose -f ~/fyp/backend/docker-compose.prod.yml exec nginx nginx -s reload
 ```
@@ -239,6 +236,7 @@ GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="-s -w" -o cailorie ./cm
 - `internal/gemini/client.go` (new).
 - `internal/storage/{db,meals,users}.go` (new).
 - `internal/model/{meal,user}.go` (new).
-- `Dockerfile`, `nginx.conf`, `docker-compose.prod.yml`, `docker-compose.yml` (new).
+- `Dockerfile`, `docker-compose.prod.yml`, `docker-compose.yml` (new).
 - `.github/workflows/deploy.yml` (new): GitHub Actions SSH deploy to Oracle VM.
 - `.env.example`, `.gitignore` (new).
+- (In the sibling fyp repo) `backend/nginx.conf`: appended the `cailorie.mycaregiver.xyz` server blocks under a comment header — this is the source of truth for the cailorie reverse-proxy config.
