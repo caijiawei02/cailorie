@@ -3,6 +3,7 @@ package bot
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -96,11 +97,8 @@ func (h *Handler) onPhoto(c telebot.Context) error {
 	defer cancel()
 	calories, err := h.gem.EstimateCalories(ctx, imageBytes, "image/jpeg")
 	if err != nil {
-		if err == gemini.ErrNotFood {
-			return c.Reply(fmt.Sprintf("%s — couldn't identify the meal. Please send a clearer photo.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
-		}
 		log.Printf("gemini estimate (chat %d, user %d): %v", chatID, sender.ID, err)
-		return c.Reply(fmt.Sprintf("%s — Gemini is busy right now, please try again in a moment.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
+		return c.Reply(formatGeminiError(err, sender.Username, sender.FirstName), telebot.ModeHTML)
 	}
 
 	// 3. Determine meal number (count existing meals today + 1).
@@ -147,4 +145,24 @@ func (h *Handler) onChatID(c telebot.Context) error {
 		return nil
 	}
 	return c.Reply(fmt.Sprintf("chat_id: %d", m.Chat.ID))
+}
+
+// formatGeminiError maps a Gemini error to a user-facing HTML reply that
+// explains what went wrong in plain language.
+func formatGeminiError(err error, username, firstName string) string {
+	who := displayName(username, firstName)
+	switch {
+	case errors.Is(err, gemini.ErrNotFood):
+		return fmt.Sprintf("%s — couldn't identify the meal. Please send a clearer photo.", who)
+	case errors.Is(err, gemini.ErrQuotaExceeded):
+		return fmt.Sprintf("%s — Gemini's free-tier quota for today has been used up. Please try again tomorrow.", who)
+	case errors.Is(err, gemini.ErrInvalidKey):
+		return fmt.Sprintf("%s — Gemini API key is invalid or unauthorized. The bot admin needs to fix GEMINI_API_KEY.", who)
+	case errors.Is(err, gemini.ErrModelUnavailable):
+		return fmt.Sprintf("%s — the Gemini model is unavailable. The bot admin needs to update the model name.", who)
+	case errors.Is(err, gemini.ErrSafetyBlocked):
+		return fmt.Sprintf("%s — Gemini blocked the image for safety reasons. Please send a different photo.", who)
+	default:
+		return fmt.Sprintf("%s — Gemini returned an unexpected error. Please try again in a moment.", who)
+	}
 }
