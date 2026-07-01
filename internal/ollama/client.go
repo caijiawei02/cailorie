@@ -32,7 +32,7 @@ func New(baseURL, model, apiKey string) (*Client, error) {
 		baseURL = "http://localhost:11434"
 	}
 	if model == "" {
-		model = "minicpm-v"
+		return nil, fmt.Errorf("OLLAMA_MODEL is required when LLM_PROVIDER=ollama")
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 	return &Client{

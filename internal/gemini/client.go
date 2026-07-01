@@ -23,7 +23,7 @@ type Client struct {
 // New constructs a Gemini client using an API key.
 func New(apiKey, model string) (*Client, error) {
 	if model == "" {
-		model = "gemini-2.0-flash"
+		return nil, fmt.Errorf("GEMINI_MODEL is required when LLM_PROVIDER=gemini")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
