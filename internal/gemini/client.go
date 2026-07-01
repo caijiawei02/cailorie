@@ -28,7 +28,7 @@ func New(apiKey string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gemini new client: %w", err)
 	}
-	return &Client{client: c, model: c.GenerativeModel("gemini-1.5-flash")}, nil
+	return &Client{client: c, model: c.GenerativeModel("gemini-2.0-flash")}, nil
 }
 
 // Close releases the underlying client.
