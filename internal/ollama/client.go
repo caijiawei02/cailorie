@@ -66,14 +66,14 @@ type chatResponse struct {
 
 // EstimateCalories sends the image bytes to the Ollama model and returns the
 // calorie estimate as an integer. Returns a sentinel llm.Err* on failure.
-func (c *Client) EstimateCalories(ctx context.Context, imageBytes []byte, mimeType string) (int, error) {
+func (c *Client) EstimateCalories(ctx context.Context, imageBytes []byte, mimeType, userText string) (int, error) {
 	b64 := base64.StdEncoding.EncodeToString(imageBytes)
 	body := chatRequest{
 		Model: c.model,
 		Messages: []chatMessage{
 			{
 				Role:    "user",
-				Content: llm.CaloriePrompt,
+				Content: llm.CaloriePromptFor(userText),
 				Images:  []string{b64},
 			},
 		},

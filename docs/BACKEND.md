@@ -27,7 +27,7 @@ internal/bot/
   handler.go               OnPhoto handler, /chatid helper, user-tracking middleware.
   reply.go                 HTML formatters for the per-photo reply and the daily summary.
   summary.go               SendDailySummary: queries per-user day totals and sends the summary.
-internal/gemini/client.go  Client.EstimateCalories(ctx, imageBytes, mimeType) (int, error).
+internal/gemini/client.go  Client.EstimateCalories(ctx, imageBytes, mimeType, userText) (int, error).
 internal/storage/
   db.go                    Open + migrations (meals, users tables + indexes).
   meals.go                 InsertMeal, DayMealCount, DayMeals, DayTotalsForChat.
@@ -55,6 +55,7 @@ All timestamps stored as RFC3339 strings in UTC.
 | photo_file_id | TEXT | Telegram file_id of the photo |
 | calories | INTEGER | Gemini estimate |
 | meal_label | INTEGER | per-user-per-SGT-day sequence (1-based) |
+| caption | TEXT NOT NULL DEFAULT '' | optional user-typed description of the meal (Telegram photo caption; empty when none) |
 | created_at | TEXT (RFC3339, UTC) | used for day-window queries |
 
 Index `idx_meals_day(chat_id, user_id, created_at)`.
@@ -91,7 +92,8 @@ Index `idx_meals_day(chat_id, user_id, created_at)`.
 1. Middleware silently upserts the sender into `users` (for any message type in an allowed chat).
 2. `OnPhoto` handler:
    - Downloads the largest photo size via `bot.File(&msg.Photo.File)`.
-   - Sends bytes to Gemini with a prompt instructing a single-integer reply, or `NA` if not food.
+   - Reads the optional Telegram photo caption from `msg.Caption` (empty when the user sent a photo with no text).
+   - Sends bytes + prompt to the vision LLM. The prompt is built by `llm.CaloriePromptFor(userText)`: when a caption is present it is appended as `The user described this meal as: "<caption>". Use this description to guide your estimate.`; when absent the bare base prompt is used (preserving prior behaviour). The base instruction asks for a single-integer reply, or `NA` if not food.
    - On `NA` / parse failure → error reply, **no DB write**.
    - On a parseable integer → compute meal number = `DayMealCount(...)+1`, `InsertMeal`, then `DayMeals` (full day's meals for that user) and quote-reply:
      ```
@@ -127,7 +129,7 @@ Index `idx_meals_day(chat_id, user_id, created_at)`.
 
 ## Gemini usage notes
 - Model: `gemini-1.5-flash` (free-tier friendly).
-- Prompt: "Identify the food ... reply with ONLY a single integer ... If not food, reply exactly: NA".
+- Prompt: built by `llm.CaloriePromptFor(userText)` in `internal/llm/llm.go`. Base instruction: "Identify the food ... reply with ONLY a single integer ... If not food, reply exactly: NA". When the user attaches a caption to their photo (e.g. "Spicy Ramen with chicken cutlet"), it is appended so the model can use the description to guide its estimate. The Ollama provider (`internal/ollama/client.go`) builds the same prompt into its chat message.
 - Response parsing tolerates stray text (e.g. "450 calories") by extracting the first integer via regex; bare `NA` or empty → `ErrNotFood`.
 - Free-tier limits (~15 RPM / ~1500 req/day) are shared across all groups. On 429 / other API errors the bot replies "Gemini is busy right now" and records nothing.
 

@@ -95,7 +95,7 @@ func (h *Handler) onPhoto(c telebot.Context) error {
 	// 2. Estimate calories via Gemini. Photos are JPEG on Telegram.
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	calories, err := h.llm.EstimateCalories(ctx, imageBytes, "image/jpeg")
+	calories, err := h.llm.EstimateCalories(ctx, imageBytes, "image/jpeg", m.Caption)
 	if err != nil {
 		log.Printf("llm estimate (chat %d, user %d): %v", chatID, sender.ID, err)
 		return c.Reply(formatLLMError(err, sender.Username, sender.FirstName), telebot.ModeHTML)
@@ -118,6 +118,7 @@ func (h *Handler) onPhoto(c telebot.Context) error {
 		PhotoFileID: m.Photo.FileID,
 		Calories:    calories,
 		MealLabel:   mealLabel,
+		Caption:     m.Caption,
 		CreatedAt:   time.Now().UTC(),
 	}
 	if _, err := storage.InsertMeal(h.db, meal); err != nil {

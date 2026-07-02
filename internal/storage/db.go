@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS meals (
 	photo_file_id TEXT NOT NULL DEFAULT '',
 	calories     INTEGER NOT NULL,
 	meal_label   INTEGER NOT NULL,
+	caption      TEXT NOT NULL DEFAULT '',
 	created_at   TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_meals_day ON meals(chat_id, user_id, created_at);
@@ -48,5 +49,47 @@ CREATE TABLE IF NOT EXISTS users (
 );
 CREATE INDEX IF NOT EXISTS idx_users_chat_seen ON users(chat_id, last_seen_at);
 `)
+	if err != nil {
+		return err
+	}
+
+	// Additive: add the optional caption column to meals for existing DBs.
+	// Fresh DBs already get it via CREATE TABLE above. Guarded so re-running
+	// migrate() is idempotent.
+	if err := addColumnIfMissing(db, "meals", "caption", "TEXT"); err != nil {
+		return fmt.Errorf("alter meals add caption: %w", err)
+	}
+	return nil
+}
+
+// addColumnIfMissing adds column `col` (of SQLite type `colType`) to `table`
+// only if it is not already present. This makes ALTER TABLE statements safe to
+// run repeatedly against pre-existing databases.
+func addColumnIfMissing(db *sql.DB, table, col, colType string) error {
+	var found bool
+	rows, err := db.Query(fmt.Sprintf("PRAGMA table_info(%s)", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull, pk int
+		var dflt sql.NullString
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &dflt, &pk); err != nil {
+			return err
+		}
+		if name == col {
+			found = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if found {
+		return nil
+	}
+	_, err = db.Exec(fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, col, colType))
 	return err
 }

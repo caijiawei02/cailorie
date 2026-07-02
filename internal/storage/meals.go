@@ -12,9 +12,9 @@ import (
 // mealLabel is the per-user-per-day sequence number.
 func InsertMeal(db *sql.DB, m model.Meal) (model.Meal, error) {
 	res, err := db.Exec(
-		`INSERT INTO meals (chat_id, user_id, username, photo_file_id, calories, meal_label, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		m.ChatID, m.UserID, m.Username, m.PhotoFileID, m.Calories, m.MealLabel, m.CreatedAt.UTC().Format(time.RFC3339),
+		`INSERT INTO meals (chat_id, user_id, username, photo_file_id, calories, meal_label, caption, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		m.ChatID, m.UserID, m.Username, m.PhotoFileID, m.Calories, m.MealLabel, m.Caption, m.CreatedAt.UTC().Format(time.RFC3339),
 	)
 	if err != nil {
 		return m, fmt.Errorf("insert meal: %w", err)
@@ -40,7 +40,7 @@ func DayMealCount(db *sql.DB, chatID, userID int64, dayStart, dayEnd time.Time) 
 // ordered by creation time ascending.
 func DayMeals(db *sql.DB, chatID, userID int64, dayStart, dayEnd time.Time) ([]model.Meal, error) {
 	rows, err := db.Query(
-		`SELECT id, chat_id, user_id, username, photo_file_id, calories, meal_label, created_at
+		`SELECT id, chat_id, user_id, username, photo_file_id, calories, meal_label, caption, created_at
 		 FROM meals
 		 WHERE chat_id=? AND user_id=? AND created_at >= ? AND created_at < ?
 		 ORDER BY created_at ASC`,
@@ -54,7 +54,7 @@ func DayMeals(db *sql.DB, chatID, userID int64, dayStart, dayEnd time.Time) ([]m
 	for rows.Next() {
 		var m model.Meal
 		var createdAtStr string
-		if err := rows.Scan(&m.ID, &m.ChatID, &m.UserID, &m.Username, &m.PhotoFileID, &m.Calories, &m.MealLabel, &createdAtStr); err != nil {
+		if err := rows.Scan(&m.ID, &m.ChatID, &m.UserID, &m.Username, &m.PhotoFileID, &m.Calories, &m.MealLabel, &m.Caption, &createdAtStr); err != nil {
 			return nil, err
 		}
 		m.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)

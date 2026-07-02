@@ -44,9 +44,9 @@ func (c *Client) Close() error {
 
 // EstimateCalories sends the image bytes to Gemini and returns the calorie
 // estimate as an integer. Returns a sentinel llm.Err* on failure.
-func (c *Client) EstimateCalories(ctx context.Context, imageBytes []byte, mimeType string) (int, error) {
+func (c *Client) EstimateCalories(ctx context.Context, imageBytes []byte, mimeType, userText string) (int, error) {
 	img := genai.ImageData(mimeType, imageBytes)
-	resp, err := c.model.GenerateContent(ctx, img, genai.Text(llm.CaloriePrompt))
+	resp, err := c.model.GenerateContent(ctx, img, genai.Text(llm.CaloriePromptFor(userText)))
 	if err != nil {
 		return 0, classifyAPIError(err)
 	}

@@ -10,6 +10,7 @@ type Meal struct {
 	Username    string
 	PhotoFileID string
 	Calories    int
-	MealLabel   int // sequence number per user per SGT day (1-based)
+	MealLabel   int       // sequence number per user per SGT day (1-based)
+	Caption     string    // optional user-typed description of the meal (may be empty)
 	CreatedAt   time.Time // UTC
 }
