@@ -34,6 +34,7 @@ func (h *Handler) Register() {
 	h.bot.Use(h.trackUserMiddleware())
 	h.bot.Handle(telebot.OnPhoto, h.onPhoto)
 	h.bot.Handle("/chatid", h.onChatID)
+	h.bot.Handle("/meals", h.onMeals)
 }
 
 // trackUserMiddleware silently upserts every message sender in allowed groups
@@ -146,6 +147,32 @@ func (h *Handler) onChatID(c telebot.Context) error {
 		return nil
 	}
 	return c.Reply(fmt.Sprintf("chat_id: %d", m.Chat.ID))
+}
+
+// onMeals replies with the caller's meals logged so far today (SGT day),
+// including any captions they attached. Works in any allowed group.
+func (h *Handler) onMeals(c telebot.Context) error {
+	m := c.Message()
+	if m == nil || m.Chat == nil || m.Sender == nil {
+		return nil
+	}
+	chatID := m.Chat.ID
+	if !h.chatAllowed(chatID) {
+		return nil
+	}
+	sender := m.Sender
+
+	dayStart, dayEnd := sgtDayBounds(time.Now(), h.sgt)
+	meals, err := storage.DayMeals(h.db, chatID, sender.ID, dayStart, dayEnd)
+	if err != nil {
+		log.Printf("meals day query (chat %d, user %d): %v", chatID, sender.ID, err)
+		return c.Reply(fmt.Sprintf("%s — internal error, please try again.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
+	}
+	if len(meals) == 0 {
+		return c.Reply(fmt.Sprintf("%s — no meals logged yet today.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
+	}
+	reply := formatMealsReply(meals, sender.Username, sender.FirstName, time.Now(), h.sgt)
+	return c.Reply(reply, telebot.ModeHTML)
 }
 
 // formatLLMError maps an LLM error to a user-facing HTML reply that
