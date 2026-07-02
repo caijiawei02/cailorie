@@ -19,7 +19,7 @@ func sgtDayBounds(t time.Time, sgt *time.Location) (time.Time, time.Time) {
 // formatMealsReply builds the per-user daily meal list reply (HTML, quote-reply).
 // Header: <b>@username</b> on 02 January 2026  (or <b>First Name</b> if no username)
 // then one line per meal: Meal N: X calories
-// then blank line and Total calories: Y calories
+// then blank line and Total: Y calories
 func formatMealsReply(meals []model.Meal, username, firstName string, t time.Time, sgt *time.Location) string {
 	var b strings.Builder
 	b.WriteString("<b>")
@@ -33,7 +33,7 @@ func formatMealsReply(meals []model.Meal, username, firstName string, t time.Tim
 		fmt.Fprintf(&b, "Meal %d: %d calories\n", m.MealLabel, m.Calories)
 		total += m.Calories
 	}
-	b.WriteString("\nTotal calories: ")
+	b.WriteString("\nTotal: ")
 	fmt.Fprintf(&b, "%d calories", total)
 	return b.String()
 }

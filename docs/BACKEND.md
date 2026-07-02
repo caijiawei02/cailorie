@@ -101,7 +101,7 @@ Index `idx_meals_day(chat_id, user_id, created_at)`.
      Meal 1: 450 calories
      Meal 2: 120 calories
 
-     Total calories: 570 calories
+     Total: 570 calories
      ```
 3. Display name: `@username` when present, else first name (HTML-escaped).
 
