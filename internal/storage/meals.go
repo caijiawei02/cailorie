@@ -65,6 +65,35 @@ func DayMeals(db *sql.DB, chatID, userID int64, dayStart, dayEnd time.Time) ([]m
 	return out, rows.Err()
 }
 
+// DayMealsForChat returns all meals for every user in a chat within
+// [dayStart, dayEnd), ordered by user then creation time ascending.
+func DayMealsForChat(db *sql.DB, chatID int64, dayStart, dayEnd time.Time) ([]model.Meal, error) {
+	rows, err := db.Query(
+		`SELECT id, chat_id, user_id, username, photo_file_id, calories, meal_label, caption, created_at
+		 FROM meals
+		 WHERE chat_id=? AND created_at >= ? AND created_at < ?
+		 ORDER BY username ASC, created_at ASC`,
+		chatID, dayStart.UTC().Format(time.RFC3339), dayEnd.UTC().Format(time.RFC3339),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []model.Meal
+	for rows.Next() {
+		var m model.Meal
+		var createdAtStr string
+		var caption sql.NullString
+		if err := rows.Scan(&m.ID, &m.ChatID, &m.UserID, &m.Username, &m.PhotoFileID, &m.Calories, &m.MealLabel, &caption, &createdAtStr); err != nil {
+			return nil, err
+		}
+		m.Caption = caption.String
+		m.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
 // DayTotalsRow is one user's daily aggregate for the summary message.
 type DayTotalsRow struct {
 	UserID    int64

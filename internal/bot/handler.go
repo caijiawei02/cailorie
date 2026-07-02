@@ -35,6 +35,7 @@ func (h *Handler) Register() {
 	h.bot.Handle(telebot.OnPhoto, h.onPhoto)
 	h.bot.Handle("/chatid", h.onChatID)
 	h.bot.Handle("/meals", h.onMeals)
+	h.bot.Handle("/allmeals", h.onAllMeals)
 }
 
 // trackUserMiddleware silently upserts every message sender in allowed groups
@@ -172,6 +173,31 @@ func (h *Handler) onMeals(c telebot.Context) error {
 		return c.Reply(fmt.Sprintf("%s — no meals logged yet today.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
 	}
 	reply := formatMealsReply(meals, sender.Username, sender.FirstName, time.Now(), h.sgt)
+	return c.Reply(reply, telebot.ModeHTML)
+}
+
+// onAllMeals replies with every user's meals logged so far today (SGT day)
+// in the current chat, with per-user subtotals and a grand total.
+func (h *Handler) onAllMeals(c telebot.Context) error {
+	m := c.Message()
+	if m == nil || m.Chat == nil {
+		return nil
+	}
+	chatID := m.Chat.ID
+	if !h.chatAllowed(chatID) {
+		return nil
+	}
+
+	dayStart, dayEnd := sgtDayBounds(time.Now(), h.sgt)
+	meals, err := storage.DayMealsForChat(h.db, chatID, dayStart, dayEnd)
+	if err != nil {
+		log.Printf("allmeals day query (chat %d): %v", chatID, err)
+		return c.Reply("Internal error, please try again.", telebot.ModeHTML)
+	}
+	if len(meals) == 0 {
+		return c.Reply("No meals logged yet today.", telebot.ModeHTML)
+	}
+	reply := formatAllMealsReply(meals, time.Now(), h.sgt)
 	return c.Reply(reply, telebot.ModeHTML)
 }
 

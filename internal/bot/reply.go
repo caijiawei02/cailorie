@@ -38,6 +38,51 @@ func formatMealsReply(meals []model.Meal, username, firstName string, t time.Tim
 	return b.String()
 }
 
+// formatAllMealsReply builds the all-users daily meal list reply (HTML).
+// Groups meals by user, showing each user's meals and per-user total.
+func formatAllMealsReply(meals []model.Meal, t time.Time, sgt *time.Location) string {
+	var b strings.Builder
+	b.WriteString("<b>All meals — ")
+	b.WriteString(t.In(sgt).Format("02 January 2006"))
+	b.WriteString("</b>\n\n")
+
+	if len(meals) == 0 {
+		b.WriteString("No meals logged yet today.")
+		return b.String()
+	}
+
+	currentUser := ""
+	userTotal := 0
+	userCount := 0
+
+	flushUser := func() {
+		if userCount > 0 {
+			fmt.Fprintf(&b, "Total: %d calories\n\n", userTotal)
+		}
+	}
+
+	for _, m := range meals {
+		name := displayName(m.Username, "")
+		if name == "" || name == "user" {
+			name = fmt.Sprintf("user %d", m.UserID)
+		}
+		if name != currentUser {
+			flushUser()
+			currentUser = name
+			userTotal = 0
+			userCount = 0
+			b.WriteString(name)
+			b.WriteByte('\n')
+		}
+		fmt.Fprintf(&b, "Meal %d: %d calories\n", m.MealLabel, m.Calories)
+		userTotal += m.Calories
+		userCount++
+	}
+	flushUser()
+
+	return strings.TrimRight(b.String(), "\n")
+}
+
 // formatSummary builds the daily summary for one chat.
 // Includes only users active today (last_seen_at >= dayStart). Zero-meal users
 // appear with "0 calories (0 meals)". Ordered by total DESC.
