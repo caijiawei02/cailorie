@@ -54,9 +54,11 @@ func DayMeals(db *sql.DB, chatID, userID int64, dayStart, dayEnd time.Time) ([]m
 	for rows.Next() {
 		var m model.Meal
 		var createdAtStr string
-		if err := rows.Scan(&m.ID, &m.ChatID, &m.UserID, &m.Username, &m.PhotoFileID, &m.Calories, &m.MealLabel, &m.Caption, &createdAtStr); err != nil {
+		var caption sql.NullString
+		if err := rows.Scan(&m.ID, &m.ChatID, &m.UserID, &m.Username, &m.PhotoFileID, &m.Calories, &m.MealLabel, &caption, &createdAtStr); err != nil {
 			return nil, err
 		}
+		m.Caption = caption.String
 		m.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
 		out = append(out, m)
 	}

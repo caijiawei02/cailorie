@@ -59,6 +59,12 @@ CREATE INDEX IF NOT EXISTS idx_users_chat_seen ON users(chat_id, last_seen_at);
 	if err := addColumnIfMissing(db, "meals", "caption", "TEXT"); err != nil {
 		return fmt.Errorf("alter meals add caption: %w", err)
 	}
+	// SQLite ALTER TABLE ADD COLUMN cannot apply a NOT NULL constraint without
+	// a default, so existing rows get NULL. Backfill them to '' so scans into a
+	// Go string don't fail. Idempotent — only touches NULLs.
+	if _, err := db.Exec("UPDATE meals SET caption = '' WHERE caption IS NULL"); err != nil {
+		return fmt.Errorf("backfill caption nulls: %w", err)
+	}
 	return nil
 }
 
