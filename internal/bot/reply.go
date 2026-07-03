@@ -38,25 +38,24 @@ func formatHelpReply() string {
 Send a photo of your food with an optional caption. The bot will estimate the calories automatically.`
 }
 
-// formatMealsReply builds the per-user daily meal list reply (HTML, quote-reply).
-// Header: <b>@username</b> on 02 January 2026  (or <b>First Name</b> if no username)
-// then one line per meal: Meal N: X calories
+// formatMealsReply builds the per-user daily meal list reply (HTML).
+// Header: <b>@username — 02 January 2006</b>
+// blank line, then one line per meal: Meal N: X calories
 // then blank line and Total: Y calories
 func formatMealsReply(meals []model.Meal, username, firstName string, t time.Time, sgt *time.Location) string {
 	var b strings.Builder
 	b.WriteString("<b>")
 	b.WriteString(displayName(username, firstName))
-	b.WriteString("</b> on ")
+	b.WriteString(" — ")
 	b.WriteString(t.In(sgt).Format("02 January 2006"))
-	b.WriteByte('\n')
+	b.WriteString("</b>\n\n")
 
 	total := 0
 	for _, m := range meals {
 		fmt.Fprintf(&b, "Meal %d: %d calories\n", m.MealLabel, m.Calories)
 		total += m.Calories
 	}
-	b.WriteString("\nTotal: ")
-	fmt.Fprintf(&b, "%d calories", total)
+	fmt.Fprintf(&b, "\nTotal: %d calories", total)
 	return b.String()
 }
 
@@ -110,9 +109,9 @@ func formatAllMealsReply(meals []model.Meal, t time.Time, sgt *time.Location) st
 // appear with "0 calories (0 meals)". Ordered by total DESC.
 func formatSummary(rows []storage.DayTotalsRow, t time.Time, sgt *time.Location) string {
 	var b strings.Builder
-	b.WriteString("📊 Daily Calorie Summary — ")
+	b.WriteString("<b>Daily Calorie Summary — ")
 	b.WriteString(t.In(sgt).Format("02 January 2006"))
-	b.WriteString("\n\n")
+	b.WriteString("</b>\n\n")
 
 	if len(rows) == 0 {
 		b.WriteString("No meals were logged today.")

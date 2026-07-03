@@ -96,27 +96,28 @@ Index `idx_meals_day(chat_id, user_id, created_at)`.
    - Sends bytes + prompt to the vision LLM. The prompt is built by `llm.CaloriePromptFor(userText)`: when a caption is present it is appended as `The user described this meal as: "<caption>". Use this description to guide your estimate.`; when absent the bare base prompt is used (preserving prior behaviour). The base instruction asks for a single-integer reply, or `NA` if not food.
    - On `NA` / parse failure → error reply, **no DB write**.
    - On a parseable integer → compute meal number = `DayMealCount(...)+1`, `InsertMeal`, then `DayMeals` (full day's meals for that user) and quote-reply:
-     ```
-     <b>@username</b> on 02 January 2026
-     Meal 1: 450 calories
-     Meal 2: 120 calories
+      ```
+      <b>@username — 02 January 2026</b>
 
-     Total: 570 calories
-     ```
+      Meal 1: 450 calories
+      Meal 2: 120 calories
+
+      Total: 570 calories
+      ```
 3. Display name: `@username` when present, else first name (HTML-escaped).
 
 ### Daily summary (`0 58 23 * * *` in SGT)
 - Fires at **23:58:00 SGT** every day, for **each** allowed chat.
 - Snapshot window is `[00:00 SGT today, fireTime)` (upper bound = now), so any meal logged during the 23:58–00:00 tail still counts toward today and is not lost.
 - Query (`storage.DayTotalsForChat`): `users` LEFT JOIN `meals` filtered to the window, **only users with `last_seen_at >= dayStart`** (i.e. active in the group today). Zero-meal users appear as `0 calories (0 meals)`. Ordered by total DESC, then username/first_name ASC.
-- Message:
-  ```
-  📊 Daily Calorie Summary — 02 January 2026
+ - Message:
+   ```
+   <b>Daily Calorie Summary — 02 January 2026</b>
 
-  @user1 — 650 calories (3 meals)
-  @user2 — 200 calories (1 meal)
-  @user3 — 0 calories (0 meals)
-  ```
+   @user1 — 650 calories (3 meals)
+   @user2 — 200 calories (1 meal)
+   @user3 — 0 calories (0 meals)
+   ```
 - If no users were active today at all → `No meals were logged today.`
 
 ### Multi-group support
