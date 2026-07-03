@@ -36,6 +36,9 @@ func (h *Handler) Register() {
 	h.bot.Handle("/chatid", h.onChatID)
 	h.bot.Handle("/meals", h.onMeals)
 	h.bot.Handle("/allmeals", h.onAllMeals)
+	h.bot.Handle("/yesterday", h.onYesterday)
+	h.bot.Handle("/allyesterday", h.onAllYesterday)
+	h.bot.Handle("/help", h.onHelp)
 }
 
 // trackUserMiddleware silently upserts every message sender in allowed groups
@@ -199,6 +202,64 @@ func (h *Handler) onAllMeals(c telebot.Context) error {
 	}
 	reply := formatAllMealsReply(meals, time.Now(), h.sgt)
 	return c.Reply(reply, telebot.ModeHTML)
+}
+
+// onYesterday replies with the caller's calorie summary from yesterday (SGT).
+func (h *Handler) onYesterday(c telebot.Context) error {
+	m := c.Message()
+	if m == nil || m.Chat == nil || m.Sender == nil {
+		return nil
+	}
+	chatID := m.Chat.ID
+	if !h.chatAllowed(chatID) {
+		return nil
+	}
+	sender := m.Sender
+
+	yStart, yEnd := sgtYesterdayBounds(time.Now(), h.sgt)
+	meals, err := storage.DayMeals(h.db, chatID, sender.ID, yStart, yEnd)
+	if err != nil {
+		log.Printf("yesterday meals query (chat %d, user %d): %v", chatID, sender.ID, err)
+		return c.Reply(fmt.Sprintf("%s — internal error, please try again.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
+	}
+	if len(meals) == 0 {
+		yesterday := time.Now().In(h.sgt).AddDate(0, 0, -1)
+		return c.Reply(fmt.Sprintf("%s — no meals logged on %s.", displayName(sender.Username, sender.FirstName), yesterday.Format("02 January 2006")), telebot.ModeHTML)
+	}
+	yesterday := time.Now().In(h.sgt).AddDate(0, 0, -1)
+	reply := formatMealsReply(meals, sender.Username, sender.FirstName, yesterday, h.sgt)
+	return c.Reply(reply, telebot.ModeHTML)
+}
+
+// onAllYesterday replies with every user's calorie summary from yesterday (SGT)
+// in the current chat.
+func (h *Handler) onAllYesterday(c telebot.Context) error {
+	m := c.Message()
+	if m == nil || m.Chat == nil {
+		return nil
+	}
+	chatID := m.Chat.ID
+	if !h.chatAllowed(chatID) {
+		return nil
+	}
+
+	yStart, yEnd := sgtYesterdayBounds(time.Now(), h.sgt)
+	rows, err := storage.DayTotalsForChat(h.db, chatID, yStart, yEnd)
+	if err != nil {
+		log.Printf("allyesterday summary query (chat %d): %v", chatID, err)
+		return c.Reply("Internal error, please try again.", telebot.ModeHTML)
+	}
+	yesterday := time.Now().In(h.sgt).AddDate(0, 0, -1)
+	if len(rows) == 0 {
+		return c.Reply(fmt.Sprintf("No meals were logged on %s.", yesterday.Format("02 January 2006")), telebot.ModeHTML)
+	}
+	reply := formatSummary(rows, yesterday, h.sgt)
+	return c.Reply(reply, telebot.ModeHTML)
+}
+
+// onHelp replies with a list of all available commands.
+func (h *Handler) onHelp(c telebot.Context) error {
+	return c.Reply(formatHelpReply(), telebot.ModeHTML)
 }
 
 // formatLLMError maps an LLM error to a user-facing HTML reply that

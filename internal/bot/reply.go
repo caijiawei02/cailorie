@@ -16,6 +16,28 @@ func sgtDayBounds(t time.Time, sgt *time.Location) (time.Time, time.Time) {
 	return dayStartLocal.UTC(), dayStartLocal.Add(24 * time.Hour).UTC()
 }
 
+// sgtYesterdayBounds returns the SGT-day UTC window for yesterday relative to t.
+func sgtYesterdayBounds(t time.Time, sgt *time.Location) (time.Time, time.Time) {
+	local := t.In(sgt)
+	yesterday := local.AddDate(0, 0, -1)
+	dayStartLocal := time.Date(yesterday.Year(), yesterday.Month(), yesterday.Day(), 0, 0, 0, 0, sgt)
+	return dayStartLocal.UTC(), dayStartLocal.Add(24 * time.Hour).UTC()
+}
+
+// formatHelpReply returns an HTML message listing all available commands.
+func formatHelpReply() string {
+	return `<b>Available Commands</b>
+
+/meals — Show your meals logged today
+/allmeals — Show everyone's meals logged today
+/yesterday — Show your calorie summary from yesterday
+/allyesterday — Show everyone's calorie summary from yesterday
+/chatid — Show the current chat ID
+
+<b>How to Log Meals</b>
+Send a photo of your food with an optional caption. The bot will estimate the calories automatically.`
+}
+
 // formatMealsReply builds the per-user daily meal list reply (HTML, quote-reply).
 // Header: <b>@username</b> on 02 January 2026  (or <b>First Name</b> if no username)
 // then one line per meal: Meal N: X calories
