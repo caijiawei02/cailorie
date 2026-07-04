@@ -145,7 +145,7 @@ func formatHighScoreReply(row *storage.HighScoreRow, username, firstName string)
 	b.WriteString("<b>")
 	b.WriteString(displayName(username, firstName))
 	b.WriteString(" — High Score</b>\n\n")
-	fmt.Fprintf(&b, "%s — %d calories (%d meals)\n", row.Day, row.Total, row.Meals)
+	fmt.Fprintf(&b, "%d calories (%d meals) on %s\n", row.Total, row.Meals, row.Day)
 	return strings.TrimRight(b.String(), "\n")
 }
 
