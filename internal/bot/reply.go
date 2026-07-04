@@ -46,7 +46,6 @@ func formatHelpReply() string {
 /allyesterday — Show everyone's calorie summary from yesterday
 /highscore — Show your highest calorie day of all time
 /allhighscore — Show everyone's highest calorie day of all time
-/chatid — Show the current chat ID
 
 <b>How to Log Meals</b>
 Send a photo of your food with an optional caption. The bot will estimate the calories automatically.`
