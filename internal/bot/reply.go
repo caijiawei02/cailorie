@@ -28,8 +28,8 @@ func sgtYesterdayBounds(t time.Time, sgt *time.Location) (time.Time, time.Time) 
 func formatHelpReply() string {
 	return `<b>Available Commands</b>
 
-/meals — Show your meals logged today
-/allmeals — Show everyone's meals logged today
+/today — Show your meals logged today
+/alltoday — Show everyone's meals logged today
 /yesterday — Show your calorie summary from yesterday
 /allyesterday — Show everyone's calorie summary from yesterday
 /chatid — Show the current chat ID

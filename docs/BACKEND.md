@@ -24,7 +24,7 @@ cmd/bot/main.go            Entrypoint: load env, open DB, build Gemini client,
                            start telebot (webhook), register cron, run,
                            serve /health on a separate port.
 internal/bot/
-  handler.go               OnPhoto handler, /chatid, /meals, /allmeals, /yesterday, /allyesterday, /help, user-tracking middleware.
+  handler.go               OnPhoto handler, /chatid, /today, /alltoday, /yesterday, /allyesterday, /help, user-tracking middleware.
   reply.go                 HTML formatters for per-photo reply, daily summary, yesterday summary, and help text.
   summary.go               SendDailySummary: queries per-user day totals and sends the summary.
 internal/gemini/client.go  Client.EstimateCalories(ctx, imageBytes, mimeType, userText) (int, error).
@@ -125,14 +125,14 @@ Index `idx_meals_day(chat_id, user_id, created_at)`.
 - Both handlers and the summary loop iterate per-`chat_id`; data is isolated by the `chat_id` column in every query.
 - One bot process serves all configured groups (efficient on a single Oracle VM).
 
-### `/meals` — today's meals for the sender
+### `/today` — today's meals for the sender
 - Replies with the caller's meals logged so far today (SGT day), including captions and total.
 
-### `/allmeals` — today's meals for everyone
+### `/alltoday` — today's meals for everyone
 - Replies with every user's meals logged so far today in the current chat, with per-user subtotals.
 
 ### `/yesterday` — sender's yesterday summary
-- Replies with the caller's meals from yesterday (SGT day), using `sgtYesterdayBounds` to compute the window. Same format as `/meals` but with yesterday's date header. Replies "no meals logged on <date>" if none.
+- Replies with the caller's meals from yesterday (SGT day), using `sgtYesterdayBounds` to compute the window. Same format as `/today` but with yesterday's date header. Replies "no meals logged on <date>" if none.
 
 ### `/allyesterday` — all users' yesterday summary
 - Replies with every user's calorie totals from yesterday (SGT day), using `DayTotalsForChat` with yesterday's window. Same format as the daily summary but for yesterday. Replies "No meals were logged on <date>" if none.
