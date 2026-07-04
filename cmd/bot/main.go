@@ -150,6 +150,18 @@ func main() {
 	if err != nil {
 		log.Fatalf("schedule daily summary: %v", err)
 	}
+
+	// Schedule the weekly summary at 23:58 SGT on Sundays only.
+	_, err = c.AddFunc("0 58 23 * * 0", func() {
+		fireTime := time.Now().In(sgt)
+		log.Printf("firing weekly summary for %d chats at %s", len(allowedChats), fireTime.Format(time.RFC3339))
+		for chatID := range allowedChats {
+			bot.SendWeeklySummary(tgBot, db, sgt, chatID, fireTime)
+		}
+	})
+	if err != nil {
+		log.Fatalf("schedule weekly summary: %v", err)
+	}
 	c.Start()
 	defer c.Stop()
 

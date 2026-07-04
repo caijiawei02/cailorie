@@ -24,6 +24,18 @@ func sgtYesterdayBounds(t time.Time, sgt *time.Location) (time.Time, time.Time) 
 	return dayStartLocal.UTC(), dayStartLocal.Add(24 * time.Hour).UTC()
 }
 
+// sgtWeekStart returns the Monday 00:00 SGT of the week containing t, as UTC.
+func sgtWeekStart(t time.Time, sgt *time.Location) time.Time {
+	local := t.In(sgt)
+	wd := int(local.Weekday())
+	if wd == 0 {
+		wd = 7
+	}
+	daysBack := wd - 1
+	monday := local.AddDate(0, 0, -daysBack)
+	return time.Date(monday.Year(), monday.Month(), monday.Day(), 0, 0, 0, 0, sgt).UTC()
+}
+
 // formatHelpReply returns an HTML message listing all available commands.
 func formatHelpReply() string {
 	return `<b>Available Commands</b>
@@ -150,6 +162,26 @@ func formatAllHighScoresReply(rows []storage.HighScoreRow) string {
 	for _, r := range rows {
 		fmt.Fprintf(&b, "%s — %d calories (%d meals on %s)\n",
 			displayName(r.Username, r.FirstName), r.Total, r.Meals, r.Day)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// formatWeeklySummary builds the weekly average summary for one chat.
+// Header uses the Monday date of the week.
+func formatWeeklySummary(rows []storage.WeeklyAvgRow, weekStart time.Time, sgt *time.Location) string {
+	var b strings.Builder
+	b.WriteString("<b>Weekly Average — ")
+	b.WriteString(weekStart.In(sgt).Format("02 January 2006"))
+	b.WriteString("</b>\n\n")
+
+	if len(rows) == 0 {
+		b.WriteString("No meals were logged this week.")
+		return b.String()
+	}
+
+	for _, r := range rows {
+		fmt.Fprintf(&b, "%s — %d calories/day (%d days)\n",
+			displayName(r.Username, r.FirstName), r.AvgCal, r.Days)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

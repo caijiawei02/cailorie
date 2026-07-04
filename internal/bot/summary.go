@@ -25,3 +25,18 @@ func SendDailySummary(b *telebot.Bot, db *sql.DB, sgt *time.Location, chatID int
 		log.Printf("daily summary send (chat %d): %v", chatID, err)
 	}
 }
+
+// SendWeeklySummary computes and sends the weekly average calories/day summary
+// to one chat. The window is [Monday 00:00 SGT, fireTime). Only sent on Sundays.
+func SendWeeklySummary(b *telebot.Bot, db *sql.DB, sgt *time.Location, chatID int64, fireTime time.Time) {
+	weekStart := sgtWeekStart(fireTime, sgt)
+	rows, err := storage.WeeklyAvgForChat(db, chatID, weekStart, fireTime.UTC(), sgt)
+	if err != nil {
+		log.Printf("weekly summary query (chat %d): %v", chatID, err)
+		return
+	}
+	msg := formatWeeklySummary(rows, weekStart, sgt)
+	if _, err := b.Send(telebot.ChatID(chatID), msg, telebot.ModeHTML); err != nil {
+		log.Printf("weekly summary send (chat %d): %v", chatID, err)
+	}
+}

@@ -24,9 +24,9 @@ cmd/bot/main.go            Entrypoint: load env, open DB, build Gemini client,
                            start telebot (webhook), register cron, run,
                            serve /health on a separate port.
 internal/bot/
-  handler.go               OnPhoto handler, /chatid, /today, /alltoday, /yesterday, /allyesterday, /help, user-tracking middleware.
-  reply.go                 HTML formatters for per-photo reply, daily summary, yesterday summary, and help text.
-  summary.go               SendDailySummary: queries per-user day totals and sends the summary.
+  handler.go               OnPhoto handler, /chatid, /meals, /allmeals, /yesterday, /allyesterday, /highscore, /allhighscore, /help, user-tracking middleware.
+  reply.go                 HTML formatters for per-photo reply, daily/weekly summary, yesterday summary, high scores, and help text.
+  summary.go               SendDailySummary: queries per-user day totals and sends the summary. SendWeeklySummary: queries weekly averages and sends on Sundays.
 internal/gemini/client.go  Client.EstimateCalories(ctx, imageBytes, mimeType, userText) (int, error).
 internal/storage/
   db.go                    Open + migrations (meals, users tables + indexes).
@@ -119,6 +119,20 @@ Index `idx_meals_day(chat_id, user_id, created_at)`.
    @user3 — 0 calories (0 meals)
    ```
 - If no users were active today at all → `No meals were logged today.`
+
+### Weekly summary (`0 58 23 * * 0` in SGT — Sundays only)
+- Fires at **23:58:00 SGT on Sundays**, for **each** allowed chat, as a **separate message** after the daily summary.
+- Snapshot window is `[Monday 00:00 SGT of the current week, fireTime)`. Uses `sgtWeekStart` to compute the Monday.
+- Query (`storage.WeeklyAvgForChat`): `meals` JOIN `users` filtered to the window, grouped by user. Only users who logged at least 1 meal during the week appear (no 0-day rows). Average = `total / days_logged` (integer division). Ordered by avg DESC, then username ASC.
+- Message:
+  ```
+  <b>Weekly Average — 30 June 2026</b>
+
+  @user1 — 1332 calories/day (6 days)
+  @user2 — 428 calories/day (3 days)
+  ```
+- Header date = Monday that started the week.
+- If no meals were logged that week → `No meals were logged this week.`
 
 ### Multi-group support
 - `GROUP_CHAT_ID` is a comma-separated list; parsed into `map[int64]bool` in `main.go`.
