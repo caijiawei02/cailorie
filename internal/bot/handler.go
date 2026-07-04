@@ -40,6 +40,7 @@ func (h *Handler) Register() {
 	h.bot.Handle("/allyesterday", h.onAllYesterday)
 	h.bot.Handle("/highscore", h.onHighScore)
 	h.bot.Handle("/allhighscore", h.onAllHighScore)
+	h.bot.Handle("/deletelast", h.onDeleteLast)
 	h.bot.Handle("/help", h.onHelp)
 }
 
@@ -310,6 +311,36 @@ func (h *Handler) onAllHighScore(c telebot.Context) error {
 	}
 	reply := formatAllHighScoresReply(rows)
 	return c.Reply(reply, telebot.ModeHTML)
+}
+
+// onDeleteLast deletes the caller's last meal today and confirms deletion.
+func (h *Handler) onDeleteLast(c telebot.Context) error {
+	m := c.Message()
+	if m == nil || m.Chat == nil || m.Sender == nil {
+		return nil
+	}
+	chatID := m.Chat.ID
+	if !h.chatAllowed(chatID) {
+		return nil
+	}
+	sender := m.Sender
+
+	dayStart, dayEnd := sgtDayBounds(time.Now(), h.sgt)
+	meal, err := storage.LastMealToday(h.db, chatID, sender.ID, dayStart, dayEnd)
+	if err != nil {
+		log.Printf("deletelast query (chat %d, user %d): %v", chatID, sender.ID, err)
+		return c.Reply(fmt.Sprintf("%s — internal error, please try again.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
+	}
+	if meal == nil {
+		return c.Reply(fmt.Sprintf("%s — no meals to delete today.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
+	}
+
+	if err := storage.DeleteMeal(h.db, meal.ID); err != nil {
+		log.Printf("deletelast delete (chat %d, user %d, meal %d): %v", chatID, sender.ID, meal.ID, err)
+		return c.Reply(fmt.Sprintf("%s — internal error, please try again.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
+	}
+
+	return c.Reply(fmt.Sprintf("%s — deleted Meal %d (%d calories).", displayName(sender.Username, sender.FirstName), meal.MealLabel, meal.Calories), telebot.ModeHTML)
 }
 
 // formatLLMError maps an LLM error to a user-facing HTML reply that

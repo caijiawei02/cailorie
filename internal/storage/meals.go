@@ -24,6 +24,37 @@ func InsertMeal(db *sql.DB, m model.Meal) (model.Meal, error) {
 	return m, nil
 }
 
+// DeleteMeal hard-deletes a meal row by its ID.
+func DeleteMeal(db *sql.DB, mealID int64) error {
+	_, err := db.Exec(`DELETE FROM meals WHERE id = ?`, mealID)
+	return err
+}
+
+// LastMealToday returns the user's most recent meal within [dayStart, dayEnd)
+// in the given chat, or nil if they have no meals today.
+func LastMealToday(db *sql.DB, chatID, userID int64, dayStart, dayEnd time.Time) (*model.Meal, error) {
+	row := db.QueryRow(
+		`SELECT id, chat_id, user_id, username, photo_file_id, calories, meal_label, caption, created_at
+		 FROM meals
+		 WHERE chat_id=? AND user_id=? AND created_at >= ? AND created_at < ?
+		 ORDER BY created_at DESC
+		 LIMIT 1`,
+		chatID, userID, dayStart.UTC().Format(time.RFC3339), dayEnd.UTC().Format(time.RFC3339),
+	)
+	var m model.Meal
+	var createdAtStr string
+	var caption sql.NullString
+	if err := row.Scan(&m.ID, &m.ChatID, &m.UserID, &m.Username, &m.PhotoFileID, &m.Calories, &m.MealLabel, &caption, &createdAtStr); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	m.Caption = caption.String
+	m.CreatedAt, _ = time.Parse(time.RFC3339, createdAtStr)
+	return &m, nil
+}
+
 // DayMealCount returns the number of meals logged by a user in a chat within
 // the half-open window [dayStart, dayEnd) (UTC times).
 func DayMealCount(db *sql.DB, chatID, userID int64, dayStart, dayEnd time.Time) (int, error) {

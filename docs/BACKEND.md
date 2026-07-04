@@ -24,13 +24,13 @@ cmd/bot/main.go            Entrypoint: load env, open DB, build Gemini client,
                            start telebot (webhook), register cron, run,
                            serve /health on a separate port.
 internal/bot/
-  handler.go               OnPhoto handler, /chatid, /meals, /allmeals, /yesterday, /allyesterday, /highscore, /allhighscore, /help, user-tracking middleware.
+  handler.go               OnPhoto handler, /chatid, /meals, /allmeals, /yesterday, /allyesterday, /highscore, /allhighscore, /deletelast, /help, user-tracking middleware.
   reply.go                 HTML formatters for per-photo reply, daily/weekly summary, yesterday summary, high scores, and help text.
   summary.go               SendDailySummary: queries per-user day totals and sends the summary. SendWeeklySummary: queries weekly averages and sends on Sundays.
 internal/gemini/client.go  Client.EstimateCalories(ctx, imageBytes, mimeType, userText) (int, error).
 internal/storage/
   db.go                    Open + migrations (meals, users tables + indexes).
-  meals.go                 InsertMeal, DayMealCount, DayMeals, DayMealsForChat, DayTotalsForChat, UserHighScore, ChatHighScores.
+  meals.go                 InsertMeal, DeleteMeal, LastMealToday, DayMealCount, DayMeals, DayMealsForChat, DayTotalsForChat, UserHighScore, ChatHighScores, WeeklyAvgForChat.
   users.go                 UpsertUser.
 internal/model/
   meal.go                  Meal struct.
@@ -176,6 +176,12 @@ Index `idx_meals_day(chat_id, user_id, created_at)`.
 
 ### `/chatid` helper
 - Replies with the current `chat.ID`. Works in DM or any group; used during setup to discover the id to put in `GROUP_CHAT_ID`.
+
+### `/deletelast` — delete sender's last meal today
+- Hard-deletes the caller's most recent meal today (SGT day) and confirms deletion.
+- Format: `{displayName} — deleted Meal {label} ({calories} calories).`
+- If the user has no meals today: replies `{displayName} — no meals to delete today.`
+- Uses `LastMealToday` (ordered by `created_at DESC LIMIT 1`) and `DeleteMeal` for the hard delete.
 
 ## Gemini usage notes
 - Model: `gemini-1.5-flash` (free-tier friendly).
