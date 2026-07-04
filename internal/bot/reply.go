@@ -32,6 +32,8 @@ func formatHelpReply() string {
 /alltoday — Show everyone's meals logged today
 /yesterday — Show your calorie summary from yesterday
 /allyesterday — Show everyone's calorie summary from yesterday
+/highscore — Show your highest calorie day of all time
+/allhighscore — Show everyone's highest calorie day of all time
 /chatid — Show the current chat ID
 
 <b>How to Log Meals</b>
@@ -121,6 +123,33 @@ func formatSummary(rows []storage.DayTotalsRow, t time.Time, sgt *time.Location)
 	for _, r := range rows {
 		fmt.Fprintf(&b, "%s — %d calories (%d meals)\n",
 			displayName(r.Username, r.FirstName), r.Total, r.Meals)
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// formatHighScoreReply formats a single user's highest-calorie day.
+func formatHighScoreReply(row *storage.HighScoreRow, username, firstName string) string {
+	var b strings.Builder
+	b.WriteString("<b>")
+	b.WriteString(displayName(username, firstName))
+	b.WriteString(" — High Score</b>\n\n")
+	fmt.Fprintf(&b, "%s — %d calories (%d meals)\n", row.Day, row.Total, row.Meals)
+	return strings.TrimRight(b.String(), "\n")
+}
+
+// formatAllHighScoresReply formats all users' highest-calorie days.
+func formatAllHighScoresReply(rows []storage.HighScoreRow) string {
+	var b strings.Builder
+	b.WriteString("<b>High Scores — All Time</b>\n\n")
+
+	if len(rows) == 0 {
+		b.WriteString("No meals have been logged yet.")
+		return b.String()
+	}
+
+	for _, r := range rows {
+		fmt.Fprintf(&b, "%s — %d calories (%d meals on %s)\n",
+			displayName(r.Username, r.FirstName), r.Total, r.Meals, r.Day)
 	}
 	return strings.TrimRight(b.String(), "\n")
 }

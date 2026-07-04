@@ -30,7 +30,7 @@ internal/bot/
 internal/gemini/client.go  Client.EstimateCalories(ctx, imageBytes, mimeType, userText) (int, error).
 internal/storage/
   db.go                    Open + migrations (meals, users tables + indexes).
-  meals.go                 InsertMeal, DayMealCount, DayMeals, DayTotalsForChat.
+  meals.go                 InsertMeal, DayMealCount, DayMeals, DayMealsForChat, DayTotalsForChat, UserHighScore, ChatHighScores.
   users.go                 UpsertUser.
 internal/model/
   meal.go                  Meal struct.
@@ -139,6 +139,26 @@ Index `idx_meals_day(chat_id, user_id, created_at)`.
 
 ### `/help` — list available commands
 - Replies with an HTML message listing all commands and a brief "How to Log Meals" section.
+
+### `/highscore` — sender's all-time high score
+- Replies with the caller's single highest-calorie day ever, using `UserHighScore` which groups meals by SGT day and picks the highest total. Format:
+  ```
+  <b>@username — High Score</b>
+
+  02 January 2026 — 1250 calories (4 meals)
+  ```
+- Replies "{displayName} — no meals logged yet." if the user has no meals at all.
+
+### `/allhighscore` — all users' all-time high scores
+- Replies with every user's highest-calorie day in the chat, using `ChatHighScores` which uses `ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY total DESC)` to pick each user's best day. Ordered by total DESC.
+- Format:
+  ```
+  <b>High Scores — All Time</b>
+
+  @user1 — 1250 calories (4 meals on 02 January 2026)
+  @user2 — 980 calories (3 meals on 28 December 2025)
+  ```
+- Replies "No meals have been logged yet." if the chat has no meals at all.
 
 ### `/chatid` helper
 - Replies with the current `chat.ID`. Works in DM or any group; used during setup to discover the id to put in `GROUP_CHAT_ID`.

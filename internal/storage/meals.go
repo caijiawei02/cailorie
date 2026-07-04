@@ -103,6 +103,16 @@ type DayTotalsRow struct {
 	Meals     int
 }
 
+// HighScoreRow is one user's highest-calorie day across all time.
+type HighScoreRow struct {
+	UserID    int64
+	Username  string
+	FirstName string
+	Day       string // "02 January 2006" formatted
+	Total     int
+	Meals     int
+}
+
 // DayTotalsForChat returns per-user totals for the given chat within the
 // half-open window [dayStart, dayEnd) (UTC), including only users active in
 // the chat today (last_seen_at >= dayStart). Users with zero meals are
@@ -133,6 +143,96 @@ func DayTotalsForChat(db *sql.DB, chatID int64, dayStart, dayEnd time.Time) ([]D
 		if err := rows.Scan(&r.UserID, &r.Username, &r.FirstName, &r.Total, &r.Meals); err != nil {
 			return nil, err
 		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// tzOffset returns a SQLite time-modifier string like "+08:00" or "-05:00"
+// representing the offset of the given location from UTC.
+func tzOffset(loc *time.Location) string {
+	_, offset := time.Date(2024, 1, 1, 12, 0, 0, 0, loc).Zone()
+	sign := "+"
+	if offset < 0 {
+		sign = "-"
+		offset = -offset
+	}
+	h := offset / 3600
+	m := (offset % 3600) / 60
+	return fmt.Sprintf("%s%02d:%02d", sign, h, m)
+}
+
+// UserHighScore returns the single highest-calorie day for one user in a chat.
+// Returns false (nil row) if the user has no meals.
+func UserHighScore(db *sql.DB, chatID, userID int64, loc *time.Location) (*HighScoreRow, error) {
+	off := tzOffset(loc)
+	row := db.QueryRow(
+		`SELECT SUM(calories) AS total, COUNT(id) AS meals,
+		        DATE(created_at, ?) AS day
+		 FROM meals
+		 WHERE chat_id = ? AND user_id = ?
+		 GROUP BY day
+		 ORDER BY total DESC, created_at DESC
+		 LIMIT 1`,
+		off, chatID, userID,
+	)
+	var r HighScoreRow
+	var dayStr string
+	if err := row.Scan(&r.Total, &r.Meals, &dayStr); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	r.UserID = userID
+
+	uRow := db.QueryRow(
+		`SELECT username, first_name FROM users WHERE chat_id = ? AND user_id = ?`,
+		chatID, userID,
+	)
+	_ = uRow.Scan(&r.Username, &r.FirstName)
+
+	parsed, err := time.Parse("2006-01-02", dayStr)
+	if err != nil {
+		return nil, err
+	}
+	r.Day = parsed.In(loc).Format("02 January 2006")
+	return &r, nil
+}
+
+// ChatHighScores returns each user's highest-calorie day in a chat,
+// ordered by total DESC.
+func ChatHighScores(db *sql.DB, chatID int64, loc *time.Location) ([]HighScoreRow, error) {
+	off := tzOffset(loc)
+	rows, err := db.Query(
+		`SELECT user_id, username, first_name, total, meals, day FROM (
+		     SELECT user_id, username, first_name,
+		            SUM(calories) AS total, COUNT(id) AS meals,
+		            DATE(created_at, ?) AS day,
+		            ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY SUM(calories) DESC, MAX(created_at) DESC) AS rn
+		     FROM meals
+		     WHERE chat_id = ?
+		     GROUP BY user_id, day
+		 ) WHERE rn = 1
+		 ORDER BY total DESC, username ASC`,
+		off, chatID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []HighScoreRow
+	for rows.Next() {
+		var r HighScoreRow
+		var dayStr string
+		if err := rows.Scan(&r.UserID, &r.Username, &r.FirstName, &r.Total, &r.Meals, &dayStr); err != nil {
+			return nil, err
+		}
+		parsed, err := time.Parse("2006-01-02", dayStr)
+		if err != nil {
+			return nil, err
+		}
+		r.Day = parsed.In(loc).Format("02 January 2006")
 		out = append(out, r)
 	}
 	return out, rows.Err()

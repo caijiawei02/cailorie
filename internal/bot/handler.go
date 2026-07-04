@@ -38,6 +38,8 @@ func (h *Handler) Register() {
 	h.bot.Handle("/alltoday", h.onAllMeals)
 	h.bot.Handle("/yesterday", h.onYesterday)
 	h.bot.Handle("/allyesterday", h.onAllYesterday)
+	h.bot.Handle("/highscore", h.onHighScore)
+	h.bot.Handle("/allhighscore", h.onAllHighScore)
 	h.bot.Handle("/help", h.onHelp)
 }
 
@@ -260,6 +262,54 @@ func (h *Handler) onAllYesterday(c telebot.Context) error {
 // onHelp replies with a list of all available commands.
 func (h *Handler) onHelp(c telebot.Context) error {
 	return c.Reply(formatHelpReply(), telebot.ModeHTML)
+}
+
+// onHighScore replies with the caller's highest-calorie day of all time.
+func (h *Handler) onHighScore(c telebot.Context) error {
+	m := c.Message()
+	if m == nil || m.Chat == nil || m.Sender == nil {
+		return nil
+	}
+	chatID := m.Chat.ID
+	if !h.chatAllowed(chatID) {
+		return nil
+	}
+	sender := m.Sender
+
+	row, err := storage.UserHighScore(h.db, chatID, sender.ID, h.sgt)
+	if err != nil {
+		log.Printf("highscore query (chat %d, user %d): %v", chatID, sender.ID, err)
+		return c.Reply(fmt.Sprintf("%s — internal error, please try again.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
+	}
+	if row == nil {
+		return c.Reply(fmt.Sprintf("%s — no meals logged yet.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
+	}
+	reply := formatHighScoreReply(row, sender.Username, sender.FirstName)
+	return c.Reply(reply, telebot.ModeHTML)
+}
+
+// onAllHighScore replies with every user's highest-calorie day of all time
+// in the current chat.
+func (h *Handler) onAllHighScore(c telebot.Context) error {
+	m := c.Message()
+	if m == nil || m.Chat == nil {
+		return nil
+	}
+	chatID := m.Chat.ID
+	if !h.chatAllowed(chatID) {
+		return nil
+	}
+
+	rows, err := storage.ChatHighScores(h.db, chatID, h.sgt)
+	if err != nil {
+		log.Printf("allhighscore query (chat %d): %v", chatID, err)
+		return c.Reply("Internal error, please try again.", telebot.ModeHTML)
+	}
+	if len(rows) == 0 {
+		return c.Reply("No meals have been logged yet.", telebot.ModeHTML)
+	}
+	reply := formatAllHighScoresReply(rows)
+	return c.Reply(reply, telebot.ModeHTML)
 }
 
 // formatLLMError maps an LLM error to a user-facing HTML reply that
