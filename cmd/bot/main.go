@@ -151,8 +151,8 @@ func main() {
 		log.Fatalf("schedule daily summary: %v", err)
 	}
 
-	// Schedule the weekly summary at 23:58 SGT on Sundays only.
-	_, err = c.AddFunc("0 58 23 * * 0", func() {
+	// Schedule the weekly summary at 23:59 SGT on Sundays only (after daily).
+	_, err = c.AddFunc("0 59 23 * * 0", func() {
 		fireTime := time.Now().In(sgt)
 		log.Printf("firing weekly summary for %d chats at %s", len(allowedChats), fireTime.Format(time.RFC3339))
 		for chatID := range allowedChats {
