@@ -24,13 +24,13 @@ cmd/bot/main.go            Entrypoint: load env, open DB, build Gemini client,
                            start telebot (webhook), register cron, run,
                            serve /health on a separate port.
 internal/bot/
-  handler.go               OnPhoto handler, /chatid, /meals, /allmeals, /yesterday, /allyesterday, /highscore, /allhighscore, /week, /allweek, /deletelast, /help, user-tracking middleware.
-  reply.go                 HTML formatters for per-photo reply, daily/weekly summary, yesterday summary, high scores, weekly user reply, and help text.
+  handler.go               OnPhoto handler, /chatid, /today, /yesterday, /highscore, /week, /deletelast, /help, user-tracking middleware.
+  reply.go                 HTML formatters for per-photo reply, all-users daily meals, daily/weekly summary, yesterday summary, high scores, and help text.
   summary.go               SendDailySummary: queries per-user day totals and sends the summary. SendWeeklySummary: queries weekly averages and sends on Sundays.
 internal/gemini/client.go  Client.EstimateCalories(ctx, imageBytes, mimeType, userText) (int, error).
 internal/storage/
   db.go                    Open + migrations (meals, users tables + indexes).
-  meals.go                 InsertMeal, DeleteMeal, LastMealToday, DayMealCount, DayMeals, DayMealsForChat, DayTotalsForChat, UserHighScore, ChatHighScores, WeeklyAvgForChat, WeeklyAvgForUser.
+  meals.go                 InsertMeal, DeleteMeal, LastMealToday, DayMealCount, DayMeals, DayMealsForChat, DayTotalsForChat, ChatHighScores, WeeklyAvgForChat.
   users.go                 UpsertUser.
 internal/model/
   meal.go                  Meal struct.
@@ -139,31 +139,15 @@ Index `idx_meals_day(chat_id, user_id, created_at)`.
 - Both handlers and the summary loop iterate per-`chat_id`; data is isolated by the `chat_id` column in every query.
 - One bot process serves all configured groups (efficient on a single Oracle VM).
 
-### `/today` — today's meals for the sender
-- Replies with the caller's meals logged so far today (SGT day), including captions and total.
+### `/today` — everyone's meals today
+- Replies with every user's meals logged so far today (SGT day) in the current chat, with per-user subtotals and a grand total.
+- Uses `DayMealsForChat` and `formatAllMealsReply`.
 
-### `/alltoday` — today's meals for everyone
-- Replies with every user's meals logged so far today in the current chat, with per-user subtotals.
+### `/yesterday` — everyone's yesterday summary
+- Replies with every user's calorie totals from yesterday (SGT day), using `DayTotalsForChat` with yesterday's window. Same format as the daily summary but for yesterday.
+- Replies "No meals were logged on <date>" if none.
 
-### `/yesterday` — sender's yesterday summary
-- Replies with the caller's meals from yesterday (SGT day), using `sgtYesterdayBounds` to compute the window. Same format as `/today` but with yesterday's date header. Replies "no meals logged on <date>" if none.
-
-### `/allyesterday` — all users' yesterday summary
-- Replies with every user's calorie totals from yesterday (SGT day), using `DayTotalsForChat` with yesterday's window. Same format as the daily summary but for yesterday. Replies "No meals were logged on <date>" if none.
-
-### `/help` — list available commands
-- Replies with an HTML message listing all commands and a brief "How to Log Meals" section.
-
-### `/highscore` — sender's all-time high score
-- Replies with the caller's single highest-calorie day ever, using `UserHighScore` which groups meals by SGT day and picks the highest total. Format:
-  ```
-  <b>@username — High Score</b>
-
-  02 January 2026 — 1250 calories (4 meals)
-  ```
-- Replies "{displayName} — no meals logged yet." if the user has no meals at all.
-
-### `/allhighscore` — all users' all-time high scores
+### `/highscore` — all users' all-time high scores
 - Replies with every user's highest-calorie day in the chat, using `ChatHighScores` which uses `ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY total DESC)` to pick each user's best day. Ordered by total DESC.
 - Format:
   ```
@@ -174,33 +158,24 @@ Index `idx_meals_day(chat_id, user_id, created_at)`.
   ```
 - Replies "No meals have been logged yet." if the chat has no meals at all.
 
+### `/week` — everyone's weekly average calories/day
+- Replies with every user's average calories per day for the current week (Monday–now, SGT) in the current chat.
+- Uses `WeeklyAvgForChat` — the same query and format as the cron-based weekly summary, but on-demand.
+- Only users who logged at least 1 meal during the week appear (no 0-day rows).
+- Average = total calories / number of distinct days with at least 1 meal (integer division).
+- If no meals were logged this week: replies `No meals were logged this week.`
+
 ### `/chatid` helper
 - Replies with the current `chat.ID`. Works in DM or any group; used during setup to discover the id to put in `GROUP_CHAT_ID`.
+
+### `/help` — list available commands
+- Replies with an HTML message listing all commands and a brief "How to Log Meals" section.
 
 ### `/deletelast` — delete sender's last meal today
 - Hard-deletes the caller's most recent meal today (SGT day) and confirms deletion.
 - Format: `{displayName} — deleted Meal {label} ({calories} calories).`
 - If the user has no meals today: replies `{displayName} — no meals to delete today.`
 - Uses `LastMealToday` (ordered by `created_at DESC LIMIT 1`) and `DeleteMeal` for the hard delete.
-
-### `/week` — sender's weekly average calories/day
-- Replies with the caller's average calories per day for the current week (Monday–now, SGT).
-- Uses `WeeklyAvgForUser` which filters by `user_id` in addition to `chat_id` and the week window.
-- Average = total calories / number of distinct days with at least 1 meal (integer division, same logic as the weekly summary).
-- Format:
-  ```
-  <b>Weekly Average — 07 July 2026</b>
-
-  @username — 1850 calories/day (4 days)
-  ```
-- Header date = Monday that started the week.
-- If the user has no meals this week: replies `{displayName} — no meals logged yet this week.`
-
-### `/allweek` — all users' weekly average calories/day
-- Replies with every user's average calories per day for the current week (Monday–now, SGT) in the current chat.
-- Uses `WeeklyAvgForChat` — the same query and format as the cron-based weekly summary, but on-demand.
-- Only users who logged at least 1 meal during the week appear (no 0-day rows).
-- If no meals were logged this week: replies `No meals were logged this week.`
 
 ## Gemini usage notes
 - Model: `gemini-1.5-flash` (free-tier friendly).

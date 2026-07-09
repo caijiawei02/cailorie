@@ -34,14 +34,10 @@ func (h *Handler) Register() {
 	h.bot.Use(h.trackUserMiddleware())
 	h.bot.Handle(telebot.OnPhoto, h.onPhoto)
 	h.bot.Handle("/chatid", h.onChatID)
-	h.bot.Handle("/today", h.onMeals)
-	h.bot.Handle("/alltoday", h.onAllMeals)
+	h.bot.Handle("/today", h.onToday)
 	h.bot.Handle("/yesterday", h.onYesterday)
-	h.bot.Handle("/allyesterday", h.onAllYesterday)
 	h.bot.Handle("/highscore", h.onHighScore)
-	h.bot.Handle("/allhighscore", h.onAllHighScore)
 	h.bot.Handle("/week", h.onWeek)
-	h.bot.Handle("/allweek", h.onAllWeek)
 	h.bot.Handle("/deletelast", h.onDeleteLast)
 	h.bot.Handle("/help", h.onHelp)
 }
@@ -158,35 +154,9 @@ func (h *Handler) onChatID(c telebot.Context) error {
 	return c.Reply(fmt.Sprintf("chat_id: %d", m.Chat.ID))
 }
 
-// onMeals replies with the caller's meals logged so far today (SGT day),
-// including any captions they attached. Works in any allowed group.
-func (h *Handler) onMeals(c telebot.Context) error {
-	m := c.Message()
-	if m == nil || m.Chat == nil || m.Sender == nil {
-		return nil
-	}
-	chatID := m.Chat.ID
-	if !h.chatAllowed(chatID) {
-		return nil
-	}
-	sender := m.Sender
-
-	dayStart, dayEnd := sgtDayBounds(time.Now(), h.sgt)
-	meals, err := storage.DayMeals(h.db, chatID, sender.ID, dayStart, dayEnd)
-	if err != nil {
-		log.Printf("meals day query (chat %d, user %d): %v", chatID, sender.ID, err)
-		return c.Reply(fmt.Sprintf("%s — internal error, please try again.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
-	}
-	if len(meals) == 0 {
-		return c.Reply(fmt.Sprintf("%s — no meals logged yet today.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
-	}
-	reply := formatMealsReply(meals, sender.Username, sender.FirstName, time.Now(), h.sgt)
-	return c.Reply(reply, telebot.ModeHTML)
-}
-
-// onAllMeals replies with every user's meals logged so far today (SGT day)
+// onToday replies with every user's meals logged so far today (SGT day)
 // in the current chat, with per-user subtotals and a grand total.
-func (h *Handler) onAllMeals(c telebot.Context) error {
+func (h *Handler) onToday(c telebot.Context) error {
 	m := c.Message()
 	if m == nil || m.Chat == nil {
 		return nil
@@ -199,7 +169,7 @@ func (h *Handler) onAllMeals(c telebot.Context) error {
 	dayStart, dayEnd := sgtDayBounds(time.Now(), h.sgt)
 	meals, err := storage.DayMealsForChat(h.db, chatID, dayStart, dayEnd)
 	if err != nil {
-		log.Printf("allmeals day query (chat %d): %v", chatID, err)
+		log.Printf("today meals query (chat %d): %v", chatID, err)
 		return c.Reply("Internal error, please try again.", telebot.ModeHTML)
 	}
 	if len(meals) == 0 {
@@ -209,36 +179,9 @@ func (h *Handler) onAllMeals(c telebot.Context) error {
 	return c.Reply(reply, telebot.ModeHTML)
 }
 
-// onYesterday replies with the caller's calorie summary from yesterday (SGT).
-func (h *Handler) onYesterday(c telebot.Context) error {
-	m := c.Message()
-	if m == nil || m.Chat == nil || m.Sender == nil {
-		return nil
-	}
-	chatID := m.Chat.ID
-	if !h.chatAllowed(chatID) {
-		return nil
-	}
-	sender := m.Sender
-
-	yStart, yEnd := sgtYesterdayBounds(time.Now(), h.sgt)
-	meals, err := storage.DayMeals(h.db, chatID, sender.ID, yStart, yEnd)
-	if err != nil {
-		log.Printf("yesterday meals query (chat %d, user %d): %v", chatID, sender.ID, err)
-		return c.Reply(fmt.Sprintf("%s — internal error, please try again.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
-	}
-	if len(meals) == 0 {
-		yesterday := time.Now().In(h.sgt).AddDate(0, 0, -1)
-		return c.Reply(fmt.Sprintf("%s — no meals logged on %s.", displayName(sender.Username, sender.FirstName), yesterday.Format("02 January 2006")), telebot.ModeHTML)
-	}
-	yesterday := time.Now().In(h.sgt).AddDate(0, 0, -1)
-	reply := formatMealsReply(meals, sender.Username, sender.FirstName, yesterday, h.sgt)
-	return c.Reply(reply, telebot.ModeHTML)
-}
-
-// onAllYesterday replies with every user's calorie summary from yesterday (SGT)
+// onYesterday replies with every user's calorie summary from yesterday (SGT)
 // in the current chat.
-func (h *Handler) onAllYesterday(c telebot.Context) error {
+func (h *Handler) onYesterday(c telebot.Context) error {
 	m := c.Message()
 	if m == nil || m.Chat == nil {
 		return nil
@@ -251,7 +194,7 @@ func (h *Handler) onAllYesterday(c telebot.Context) error {
 	yStart, yEnd := sgtYesterdayBounds(time.Now(), h.sgt)
 	rows, err := storage.DayTotalsForChat(h.db, chatID, yStart, yEnd)
 	if err != nil {
-		log.Printf("allyesterday summary query (chat %d): %v", chatID, err)
+		log.Printf("yesterday summary query (chat %d): %v", chatID, err)
 		return c.Reply("Internal error, please try again.", telebot.ModeHTML)
 	}
 	yesterday := time.Now().In(h.sgt).AddDate(0, 0, -1)
@@ -262,36 +205,33 @@ func (h *Handler) onAllYesterday(c telebot.Context) error {
 	return c.Reply(reply, telebot.ModeHTML)
 }
 
-// onWeek replies with the caller's weekly average calories/day so far this week
-// (Monday–now, SGT). Only days with at least one meal are counted.
-func (h *Handler) onWeek(c telebot.Context) error {
+// onHighScore replies with every user's highest-calorie day of all time
+// in the current chat.
+func (h *Handler) onHighScore(c telebot.Context) error {
 	m := c.Message()
-	if m == nil || m.Chat == nil || m.Sender == nil {
+	if m == nil || m.Chat == nil {
 		return nil
 	}
 	chatID := m.Chat.ID
 	if !h.chatAllowed(chatID) {
 		return nil
 	}
-	sender := m.Sender
 
-	now := time.Now().In(h.sgt)
-	weekStart := sgtWeekStart(now, h.sgt)
-	row, err := storage.WeeklyAvgForUser(h.db, chatID, sender.ID, weekStart, now.UTC(), h.sgt)
+	rows, err := storage.ChatHighScores(h.db, chatID, h.sgt)
 	if err != nil {
-		log.Printf("week query (chat %d, user %d): %v", chatID, sender.ID, err)
-		return c.Reply(fmt.Sprintf("%s — internal error, please try again.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
+		log.Printf("highscore query (chat %d): %v", chatID, err)
+		return c.Reply("Internal error, please try again.", telebot.ModeHTML)
 	}
-	if row == nil {
-		return c.Reply(fmt.Sprintf("%s — no meals logged yet this week.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
+	if len(rows) == 0 {
+		return c.Reply("No meals have been logged yet.", telebot.ModeHTML)
 	}
-	reply := formatWeeklyUserReply(row, weekStart, h.sgt)
+	reply := formatAllHighScoresReply(rows)
 	return c.Reply(reply, telebot.ModeHTML)
 }
 
-// onAllWeek replies with every user's weekly average calories/day so far this
+// onWeek replies with every user's weekly average calories/day so far this
 // week (Monday–now, SGT) in the current chat.
-func (h *Handler) onAllWeek(c telebot.Context) error {
+func (h *Handler) onWeek(c telebot.Context) error {
 	m := c.Message()
 	if m == nil || m.Chat == nil {
 		return nil
@@ -305,7 +245,7 @@ func (h *Handler) onAllWeek(c telebot.Context) error {
 	weekStart := sgtWeekStart(now, h.sgt)
 	rows, err := storage.WeeklyAvgForChat(h.db, chatID, weekStart, now.UTC(), h.sgt)
 	if err != nil {
-		log.Printf("allweek query (chat %d): %v", chatID, err)
+		log.Printf("week query (chat %d): %v", chatID, err)
 		return c.Reply("Internal error, please try again.", telebot.ModeHTML)
 	}
 	reply := formatWeeklySummary(rows, weekStart, h.sgt)
@@ -315,54 +255,6 @@ func (h *Handler) onAllWeek(c telebot.Context) error {
 // onHelp replies with a list of all available commands.
 func (h *Handler) onHelp(c telebot.Context) error {
 	return c.Reply(formatHelpReply(), telebot.ModeHTML)
-}
-
-// onHighScore replies with the caller's highest-calorie day of all time.
-func (h *Handler) onHighScore(c telebot.Context) error {
-	m := c.Message()
-	if m == nil || m.Chat == nil || m.Sender == nil {
-		return nil
-	}
-	chatID := m.Chat.ID
-	if !h.chatAllowed(chatID) {
-		return nil
-	}
-	sender := m.Sender
-
-	row, err := storage.UserHighScore(h.db, chatID, sender.ID, h.sgt)
-	if err != nil {
-		log.Printf("highscore query (chat %d, user %d): %v", chatID, sender.ID, err)
-		return c.Reply(fmt.Sprintf("%s — internal error, please try again.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
-	}
-	if row == nil {
-		return c.Reply(fmt.Sprintf("%s — no meals logged yet.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
-	}
-	reply := formatHighScoreReply(row, sender.Username, sender.FirstName)
-	return c.Reply(reply, telebot.ModeHTML)
-}
-
-// onAllHighScore replies with every user's highest-calorie day of all time
-// in the current chat.
-func (h *Handler) onAllHighScore(c telebot.Context) error {
-	m := c.Message()
-	if m == nil || m.Chat == nil {
-		return nil
-	}
-	chatID := m.Chat.ID
-	if !h.chatAllowed(chatID) {
-		return nil
-	}
-
-	rows, err := storage.ChatHighScores(h.db, chatID, h.sgt)
-	if err != nil {
-		log.Printf("allhighscore query (chat %d): %v", chatID, err)
-		return c.Reply("Internal error, please try again.", telebot.ModeHTML)
-	}
-	if len(rows) == 0 {
-		return c.Reply("No meals have been logged yet.", telebot.ModeHTML)
-	}
-	reply := formatAllHighScoresReply(rows)
-	return c.Reply(reply, telebot.ModeHTML)
 }
 
 // onDeleteLast deletes the caller's last meal today and confirms deletion.

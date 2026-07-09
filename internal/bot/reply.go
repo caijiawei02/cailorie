@@ -40,14 +40,10 @@ func sgtWeekStart(t time.Time, sgt *time.Location) time.Time {
 func formatHelpReply() string {
 	return `<b>Available Commands</b>
 
-/today — Show your meals logged today
-/alltoday — Show everyone's meals logged today
-/yesterday — Show your calorie summary from yesterday
-/allyesterday — Show everyone's calorie summary from yesterday
-/highscore — Show your highest calorie day of all time
-/allhighscore — Show everyone's highest calorie day of all time
-/week — Show your weekly average calories/day
-/allweek — Show everyone's weekly average calories/day
+/today — Show everyone's meals logged today
+/yesterday — Show everyone's calorie summary from yesterday
+/week — Show everyone's weekly average calories/day
+/highscore — Show everyone's highest calorie day of all time
 /deletelast — Delete your last meal logged today
 
 <b>How to Log Meals</b>
@@ -55,9 +51,7 @@ Send a photo of your food with an optional caption. The bot will estimate the ca
 }
 
 // formatMealsReply builds the per-user daily meal list reply (HTML).
-// Header: <b>@username — 02 January 2006</b>
-// blank line, then one line per meal: Meal N: X calories
-// then blank line and Total: Y calories
+// Used for the photo reply (single-user context after logging a meal).
 func formatMealsReply(meals []model.Meal, username, firstName string, t time.Time, sgt *time.Location) string {
 	var b strings.Builder
 	b.WriteString("<b>")
@@ -141,16 +135,6 @@ func formatSummary(rows []storage.DayTotalsRow, t time.Time, sgt *time.Location)
 	return strings.TrimRight(b.String(), "\n")
 }
 
-// formatHighScoreReply formats a single user's highest-calorie day.
-func formatHighScoreReply(row *storage.HighScoreRow, username, firstName string) string {
-	var b strings.Builder
-	b.WriteString("<b>")
-	b.WriteString(displayName(username, firstName))
-	b.WriteString(" — High Score</b>\n\n")
-	fmt.Fprintf(&b, "%d calories (%d meals) on %s\n", row.Total, row.Meals, row.Day)
-	return strings.TrimRight(b.String(), "\n")
-}
-
 // formatAllHighScoresReply formats all users' highest-calorie days.
 func formatAllHighScoresReply(rows []storage.HighScoreRow) string {
 	var b strings.Builder
@@ -166,17 +150,6 @@ func formatAllHighScoresReply(rows []storage.HighScoreRow) string {
 			displayName(r.Username, r.FirstName), r.Total, r.Meals, r.Day)
 	}
 	return strings.TrimRight(b.String(), "\n")
-}
-
-// formatWeeklyUserReply builds the per-user weekly average reply (HTML).
-func formatWeeklyUserReply(row *storage.WeeklyAvgRow, weekStart time.Time, sgt *time.Location) string {
-	var b strings.Builder
-	b.WriteString("<b>Weekly Average — ")
-	b.WriteString(weekStart.In(sgt).Format("02 January 2006"))
-	b.WriteString("</b>\n\n")
-	fmt.Fprintf(&b, "%s — %d calories/day (%d days)",
-		displayName(row.Username, row.FirstName), row.AvgCal, row.Days)
-	return b.String()
 }
 
 // formatWeeklySummary builds the weekly average summary for one chat.
