@@ -280,6 +280,41 @@ func ChatHighScores(db *sql.DB, chatID int64, loc *time.Location) ([]HighScoreRo
 	return out, rows.Err()
 }
 
+// WeeklyAvgForUser returns a single user's weekly average calories per day
+// for the given chat within [weekStart, weekEnd). Returns nil if the user has
+// no meals in the window.
+func WeeklyAvgForUser(db *sql.DB, chatID, userID int64, weekStart, weekEnd time.Time, loc *time.Location) (*WeeklyAvgRow, error) {
+	off := tzOffset(loc)
+	startStr := weekStart.UTC().Format(time.RFC3339)
+	endStr := weekEnd.UTC().Format(time.RFC3339)
+	var r WeeklyAvgRow
+	err := db.QueryRow(
+		`SELECT m_user_id, u_username, u_first_name,
+		        day_total, day_count,
+		        CAST(day_total / day_count AS INTEGER) AS avg_cal
+		 FROM (
+		     SELECT m.user_id AS m_user_id,
+		            u.username AS u_username,
+		            u.first_name AS u_first_name,
+		            SUM(m.calories) AS day_total,
+		            COUNT(DISTINCT DATE(m.created_at, ?)) AS day_count
+		     FROM meals m
+		     JOIN users u ON u.user_id = m.user_id AND u.chat_id = m.chat_id
+		     WHERE m.chat_id = ? AND m.user_id = ? AND m.created_at >= ? AND m.created_at < ?
+		       AND u.last_seen_at >= ?
+		     GROUP BY m.user_id, u.username, u.first_name
+		 )`,
+		off, chatID, userID, startStr, endStr, startStr,
+	).Scan(&r.UserID, &r.Username, &r.FirstName, &r.Total, &r.Days, &r.AvgCal)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &r, nil
+}
+
 // WeeklyAvgForChat returns per-user weekly average calories per day for the
 // given chat within [weekStart, weekEnd). Only users who logged at least one
 // meal during the week are included. Ordered by avgCal DESC, then username ASC.

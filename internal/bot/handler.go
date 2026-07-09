@@ -40,6 +40,8 @@ func (h *Handler) Register() {
 	h.bot.Handle("/allyesterday", h.onAllYesterday)
 	h.bot.Handle("/highscore", h.onHighScore)
 	h.bot.Handle("/allhighscore", h.onAllHighScore)
+	h.bot.Handle("/week", h.onWeek)
+	h.bot.Handle("/allweek", h.onAllWeek)
 	h.bot.Handle("/deletelast", h.onDeleteLast)
 	h.bot.Handle("/help", h.onHelp)
 }
@@ -257,6 +259,56 @@ func (h *Handler) onAllYesterday(c telebot.Context) error {
 		return c.Reply(fmt.Sprintf("No meals were logged on %s.", yesterday.Format("02 January 2006")), telebot.ModeHTML)
 	}
 	reply := formatSummary(rows, yesterday, h.sgt)
+	return c.Reply(reply, telebot.ModeHTML)
+}
+
+// onWeek replies with the caller's weekly average calories/day so far this week
+// (Monday–now, SGT). Only days with at least one meal are counted.
+func (h *Handler) onWeek(c telebot.Context) error {
+	m := c.Message()
+	if m == nil || m.Chat == nil || m.Sender == nil {
+		return nil
+	}
+	chatID := m.Chat.ID
+	if !h.chatAllowed(chatID) {
+		return nil
+	}
+	sender := m.Sender
+
+	now := time.Now().In(h.sgt)
+	weekStart := sgtWeekStart(now, h.sgt)
+	row, err := storage.WeeklyAvgForUser(h.db, chatID, sender.ID, weekStart, now.UTC(), h.sgt)
+	if err != nil {
+		log.Printf("week query (chat %d, user %d): %v", chatID, sender.ID, err)
+		return c.Reply(fmt.Sprintf("%s — internal error, please try again.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
+	}
+	if row == nil {
+		return c.Reply(fmt.Sprintf("%s — no meals logged yet this week.", displayName(sender.Username, sender.FirstName)), telebot.ModeHTML)
+	}
+	reply := formatWeeklyUserReply(row, weekStart, h.sgt)
+	return c.Reply(reply, telebot.ModeHTML)
+}
+
+// onAllWeek replies with every user's weekly average calories/day so far this
+// week (Monday–now, SGT) in the current chat.
+func (h *Handler) onAllWeek(c telebot.Context) error {
+	m := c.Message()
+	if m == nil || m.Chat == nil {
+		return nil
+	}
+	chatID := m.Chat.ID
+	if !h.chatAllowed(chatID) {
+		return nil
+	}
+
+	now := time.Now().In(h.sgt)
+	weekStart := sgtWeekStart(now, h.sgt)
+	rows, err := storage.WeeklyAvgForChat(h.db, chatID, weekStart, now.UTC(), h.sgt)
+	if err != nil {
+		log.Printf("allweek query (chat %d): %v", chatID, err)
+		return c.Reply("Internal error, please try again.", telebot.ModeHTML)
+	}
+	reply := formatWeeklySummary(rows, weekStart, h.sgt)
 	return c.Reply(reply, telebot.ModeHTML)
 }
 

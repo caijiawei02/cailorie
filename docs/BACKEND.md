@@ -24,13 +24,13 @@ cmd/bot/main.go            Entrypoint: load env, open DB, build Gemini client,
                            start telebot (webhook), register cron, run,
                            serve /health on a separate port.
 internal/bot/
-  handler.go               OnPhoto handler, /chatid, /meals, /allmeals, /yesterday, /allyesterday, /highscore, /allhighscore, /deletelast, /help, user-tracking middleware.
-  reply.go                 HTML formatters for per-photo reply, daily/weekly summary, yesterday summary, high scores, and help text.
+  handler.go               OnPhoto handler, /chatid, /meals, /allmeals, /yesterday, /allyesterday, /highscore, /allhighscore, /week, /allweek, /deletelast, /help, user-tracking middleware.
+  reply.go                 HTML formatters for per-photo reply, daily/weekly summary, yesterday summary, high scores, weekly user reply, and help text.
   summary.go               SendDailySummary: queries per-user day totals and sends the summary. SendWeeklySummary: queries weekly averages and sends on Sundays.
 internal/gemini/client.go  Client.EstimateCalories(ctx, imageBytes, mimeType, userText) (int, error).
 internal/storage/
   db.go                    Open + migrations (meals, users tables + indexes).
-  meals.go                 InsertMeal, DeleteMeal, LastMealToday, DayMealCount, DayMeals, DayMealsForChat, DayTotalsForChat, UserHighScore, ChatHighScores, WeeklyAvgForChat.
+  meals.go                 InsertMeal, DeleteMeal, LastMealToday, DayMealCount, DayMeals, DayMealsForChat, DayTotalsForChat, UserHighScore, ChatHighScores, WeeklyAvgForChat, WeeklyAvgForUser.
   users.go                 UpsertUser.
 internal/model/
   meal.go                  Meal struct.
@@ -182,6 +182,25 @@ Index `idx_meals_day(chat_id, user_id, created_at)`.
 - Format: `{displayName} — deleted Meal {label} ({calories} calories).`
 - If the user has no meals today: replies `{displayName} — no meals to delete today.`
 - Uses `LastMealToday` (ordered by `created_at DESC LIMIT 1`) and `DeleteMeal` for the hard delete.
+
+### `/week` — sender's weekly average calories/day
+- Replies with the caller's average calories per day for the current week (Monday–now, SGT).
+- Uses `WeeklyAvgForUser` which filters by `user_id` in addition to `chat_id` and the week window.
+- Average = total calories / number of distinct days with at least 1 meal (integer division, same logic as the weekly summary).
+- Format:
+  ```
+  <b>Weekly Average — 07 July 2026</b>
+
+  @username — 1850 calories/day (4 days)
+  ```
+- Header date = Monday that started the week.
+- If the user has no meals this week: replies `{displayName} — no meals logged yet this week.`
+
+### `/allweek` — all users' weekly average calories/day
+- Replies with every user's average calories per day for the current week (Monday–now, SGT) in the current chat.
+- Uses `WeeklyAvgForChat` — the same query and format as the cron-based weekly summary, but on-demand.
+- Only users who logged at least 1 meal during the week appear (no 0-day rows).
+- If no meals were logged this week: replies `No meals were logged this week.`
 
 ## Gemini usage notes
 - Model: `gemini-1.5-flash` (free-tier friendly).
