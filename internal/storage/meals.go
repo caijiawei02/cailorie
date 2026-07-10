@@ -258,18 +258,39 @@ func LeaderboardScoresForChat(db *sql.DB, chatID int64, loc *time.Location) ([]L
 	off := tzOffset(loc)
 	rows, err := db.Query(
 		`SELECT user_id, username, first_name, COUNT(*) AS score FROM (
-		     SELECT m.user_id, u.username, u.first_name,
-		            SUM(m.calories) AS total,
-		            COUNT(DISTINCT m.user_id) OVER (PARTITION BY DATE(m.created_at, ?)) AS participant_count,
-		            RANK() OVER (PARTITION BY DATE(m.created_at, ?) ORDER BY SUM(m.calories) DESC) AS rn
-		     FROM meals m
-		     JOIN users u ON u.user_id = m.user_id AND u.chat_id = m.chat_id
-		     WHERE m.chat_id = ?
-		     GROUP BY m.user_id, u.username, u.first_name, DATE(m.created_at, ?)
-		 ) WHERE rn = 1 AND participant_count > 1
+		     SELECT dt.user_id, dt.username, dt.first_name
+		     FROM (
+		         SELECT m.user_id, u.username, u.first_name,
+		                SUM(m.calories) AS total,
+		                DATE(m.created_at, ?) AS day
+		         FROM meals m
+		         JOIN users u ON u.user_id = m.user_id AND u.chat_id = m.chat_id
+		         WHERE m.chat_id = ?
+		         GROUP BY m.user_id, u.username, u.first_name, day
+		     ) dt
+		     JOIN (
+		         SELECT day, COUNT(*) AS participant_count
+		         FROM (
+		             SELECT DISTINCT m.user_id, DATE(m.created_at, ?) AS day
+		             FROM meals m
+		             WHERE m.chat_id = ?
+		         )
+		         GROUP BY day
+		     ) pc ON pc.day = dt.day
+		     WHERE pc.participant_count > 1
+		     AND dt.total = (
+		         SELECT MAX(total) FROM (
+		             SELECT SUM(m2.calories) AS total
+		             FROM meals m2
+		             JOIN users u2 ON u2.user_id = m2.user_id AND u2.chat_id = m2.chat_id
+		             WHERE m2.chat_id = ? AND DATE(m2.created_at, ?) = dt.day
+		             GROUP BY m2.user_id, u2.username, u2.first_name
+		         )
+		     )
+		 )
 		 GROUP BY user_id, username, first_name
 		 ORDER BY score DESC, username ASC, first_name ASC`,
-		off, off, chatID, off,
+		off, chatID, off, chatID, chatID, off,
 	)
 	if err != nil {
 		return nil, err
