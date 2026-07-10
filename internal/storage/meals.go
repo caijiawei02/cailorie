@@ -144,6 +144,15 @@ type HighScoreRow struct {
 	Meals     int
 }
 
+// LeaderboardScoreRow is one user's total points (number of days they were
+// the top calorie earner, excluding days with only one participant).
+type LeaderboardScoreRow struct {
+	UserID    int64
+	Username  string
+	FirstName string
+	Score     int
+}
+
 // WeeklyAvgRow is one user's weekly average calories per day.
 type WeeklyAvgRow struct {
 	UserID    int64
@@ -237,6 +246,41 @@ func ChatHighScores(db *sql.DB, chatID int64, loc *time.Location) ([]HighScoreRo
 			return nil, err
 		}
 		r.Day = parsed.In(loc).Format("02 January 2006")
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// LeaderboardScoresForChat returns each user's total points: number of days
+// they tied for the highest calorie total, excluding days with only one
+// participant. Ordered by score DESC, then username ASC.
+func LeaderboardScoresForChat(db *sql.DB, chatID int64, loc *time.Location) ([]LeaderboardScoreRow, error) {
+	off := tzOffset(loc)
+	rows, err := db.Query(
+		`SELECT user_id, username, first_name, COUNT(*) AS score FROM (
+		     SELECT m.user_id, u.username, u.first_name,
+		            SUM(m.calories) AS total,
+		            COUNT(DISTINCT m.user_id) OVER (PARTITION BY DATE(m.created_at, ?)) AS participant_count,
+		            RANK() OVER (PARTITION BY DATE(m.created_at, ?) ORDER BY SUM(m.calories) DESC) AS rn
+		     FROM meals m
+		     JOIN users u ON u.user_id = m.user_id AND u.chat_id = m.chat_id
+		     WHERE m.chat_id = ?
+		     GROUP BY m.user_id, u.username, u.first_name, DATE(m.created_at, ?)
+		 ) WHERE rn = 1 AND participant_count > 1
+		 GROUP BY user_id, username, first_name
+		 ORDER BY score DESC, username ASC, first_name ASC`,
+		off, off, chatID, off,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []LeaderboardScoreRow
+	for rows.Next() {
+		var r LeaderboardScoreRow
+		if err := rows.Scan(&r.UserID, &r.Username, &r.FirstName, &r.Score); err != nil {
+			return nil, err
+		}
 		out = append(out, r)
 	}
 	return out, rows.Err()

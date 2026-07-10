@@ -24,13 +24,13 @@ cmd/bot/main.go            Entrypoint: load env, open DB, build Gemini client,
                            start telebot (webhook), register cron, run,
                            serve /health on a separate port.
 internal/bot/
-  handler.go               OnPhoto handler, /chatid, /today, /yesterday, /highscore, /week, /deletelast, /help, user-tracking middleware.
-  reply.go                 HTML formatters for per-photo reply, all-users daily meals, daily/weekly summary, yesterday summary, high scores, and help text.
+  handler.go               OnPhoto handler, /chatid, /today, /yesterday, /highscore, /leaderboard, /week, /deletelast, /help, user-tracking middleware.
+  reply.go                 HTML formatters for per-photo reply, all-users daily meals, daily/weekly summary, yesterday summary, high scores, leaderboard scores, and help text.
   summary.go               SendDailySummary: queries per-user day totals and sends the summary. SendWeeklySummary: queries weekly averages and sends on Sundays.
 internal/gemini/client.go  Client.EstimateCalories(ctx, imageBytes, mimeType, userText) (int, error).
 internal/storage/
   db.go                    Open + migrations (meals, users tables + indexes).
-  meals.go                 InsertMeal, DeleteMeal, LastMealToday, DayMealCount, DayMeals, DayMealsForChat, DayTotalsForChat, ChatHighScores, WeeklyAvgForChat.
+  meals.go                 InsertMeal, DeleteMeal, LastMealToday, DayMealCount, DayMeals, DayMealsForChat, DayTotalsForChat, ChatHighScores, LeaderboardScoresForChat, WeeklyAvgForChat.
   users.go                 UpsertUser.
 internal/model/
   meal.go                  Meal struct.
@@ -157,6 +157,21 @@ Index `idx_meals_day(chat_id, user_id, created_at)`.
   @user2 — 980 calories (3 meals on 28 December 2025)
   ```
 - Replies "No meals have been logged yet." if the chat has no meals at all.
+
+### `/leaderboard` — all-time leaderboard points
+- Replies with each user's total points: number of days they tied for the highest calorie total, excluding days with only one participant.
+- Uses `LeaderboardScoresForChat` with a SQL query using `RANK() OVER (PARTITION BY DATE(...) ORDER BY SUM(calories) DESC)` and `COUNT(DISTINCT user_id) OVER (PARTITION BY DATE(...))` to detect ties and solo days.
+- Only days with 2+ participants count. Ties award +1 to all tied users.
+- Ordered by score DESC, then username ASC.
+- Format:
+  ```
+  <b>Leaderboard — All Time</b>
+
+  <b>Scores</b>
+  @alice — 2 points
+  @bob — 1 point
+  ```
+- Replies "No leaderboard data yet. At least two participants need to log meals on the same day." if no qualifying days exist.
 
 ### `/week` — everyone's weekly average calories/day
 - Replies with every user's average calories per day for the current week (Monday–now, SGT) in the current chat.

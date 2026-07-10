@@ -37,6 +37,7 @@ func (h *Handler) Register() {
 	h.bot.Handle("/today", h.onToday)
 	h.bot.Handle("/yesterday", h.onYesterday)
 	h.bot.Handle("/highscore", h.onHighScore)
+	h.bot.Handle("/leaderboard", h.onLeaderboard)
 	h.bot.Handle("/week", h.onWeek)
 	h.bot.Handle("/deletelast", h.onDeleteLast)
 	h.bot.Handle("/help", h.onHelp)
@@ -226,6 +227,30 @@ func (h *Handler) onHighScore(c telebot.Context) error {
 		return c.Reply("No meals have been logged yet.", telebot.ModeHTML)
 	}
 	reply := formatAllHighScoresReply(rows)
+	return c.Reply(reply, telebot.ModeHTML)
+}
+
+// onLeaderboard replies with each user's total points (days they were the
+// top calorie earner, excluding solo days).
+func (h *Handler) onLeaderboard(c telebot.Context) error {
+	m := c.Message()
+	if m == nil || m.Chat == nil {
+		return nil
+	}
+	chatID := m.Chat.ID
+	if !h.chatAllowed(chatID) {
+		return nil
+	}
+
+	rows, err := storage.LeaderboardScoresForChat(h.db, chatID, h.sgt)
+	if err != nil {
+		log.Printf("leaderboard query (chat %d): %v", chatID, err)
+		return c.Reply("Internal error, please try again.", telebot.ModeHTML)
+	}
+	if len(rows) == 0 {
+		return c.Reply("No leaderboard data yet. At least two participants need to log meals on the same day.", telebot.ModeHTML)
+	}
+	reply := formatLeaderboardScoresReply(rows)
 	return c.Reply(reply, telebot.ModeHTML)
 }
 

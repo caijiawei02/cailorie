@@ -152,6 +152,22 @@ func formatAllHighScoresReply(rows []storage.HighScoreRow) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// formatLeaderboardScoresReply formats the leaderboard scores.
+func formatLeaderboardScoresReply(rows []storage.LeaderboardScoreRow) string {
+	var b strings.Builder
+	b.WriteString("<b>Leaderboard — All Time</b>\n\n")
+	b.WriteString("<b>Scores</b>\n")
+
+	for _, r := range rows {
+		fmt.Fprintf(&b, "%s — %d point", displayName(r.Username, r.FirstName), r.Score)
+		if r.Score != 1 {
+			b.WriteByte('s')
+		}
+		b.WriteByte('\n')
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 // formatWeeklySummary builds the weekly average summary for one chat.
 // Header uses the Monday date of the week.
 func formatWeeklySummary(rows []storage.WeeklyAvgRow, weekStart time.Time, sgt *time.Location) string {
