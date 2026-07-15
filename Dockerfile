@@ -9,7 +9,7 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /cailorie ./cmd/bot
 
 # --- Runtime stage ---
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates tzdata curl && \
+RUN apk add --no-cache ca-certificates tzdata curl sqlite && \
     adduser -D -h /var/lib/cailorie cailorie
 WORKDIR /var/lib/cailorie
 COPY --from=builder /cailorie /usr/local/bin/cailorie
