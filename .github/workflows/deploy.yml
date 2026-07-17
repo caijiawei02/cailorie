@@ -69,16 +69,13 @@ jobs:
             docker compose -f docker-compose.prod.yml down || true
             docker compose -f docker-compose.prod.yml up -d --build
 
-            # ── Reload fyp's nginx so it picks up the cailorie server block ──
-            HAS_FYP=0
-            [ -d "$HOME/fyp/backend" ] && HAS_FYP=1 || true
-            if [ "$HAS_FYP" = "1" ]; then
-              docker compose -f "$HOME/fyp/backend/docker-compose.prod.yml" exec -T nginx nginx -s reload \
-                && echo "fyp nginx reloaded (cailorie server block active)" \
-                || echo "WARN: could not reload fyp nginx"
-            else
-              echo "WARN: ~/fyp/backend not found — deploy fyp first, then re-run."
-            fi
+            # ── Reload the shared edge proxy (~/server-stuff) ──
+            # nginx was decoupled from fyp's compose into its own stack at
+            # ~/server-stuff. Reload it so it picks up the cailorie server block
+            # and can reach the freshly-started cailorie-bot container.
+            docker compose -f "$HOME/server-stuff/docker-compose.yml" exec -T nginx nginx -s reload \
+              && echo "edge nginx reloaded (cailorie server block active)" \
+              || echo "WARN: could not reload edge nginx"
 
             # ── Wait for bot health ──
             echo "Waiting for bot to become healthy..."
